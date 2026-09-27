@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Photo Studio</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- SheetJS (Excel read/write) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- JSZip & FileSaver (ZIP generation) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <!-- TensorFlow.js & BlazeFace for AI Auto Face Centering -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        /* Flash animation effect on photo capture */
+        @keyframes cameraFlash {
+            0% { opacity: 0.9; background-color: white; }
+            100% { opacity: 0; background-color: transparent; }
+        }
+        .flash-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 40;
+        }
+        .animate-flash {
+            animation: cameraFlash 0.35s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- App Navigation Header -->
+    <header class="bg-slate-800 border-b border-slate-700/80 sticky top-0 z-30 shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+                    <i class="fa-solid me-0 fa-camera-retro text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight text-white flex items-center gap-2">
+                        Student Photo Studio
+                        <span class="text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full">Pro</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">4:5 High Precision Portrait Studio</p>
+                </div>
+            </div>
+
+            <!-- Header Action Controls & Account Status -->
+            <div class="flex items-center space-x-3">
+                <!-- Resolution & Quality Settings Button -->
+                <button onclick="openQualityModal()" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-medium text-slate-200 transition flex items-center gap-1.5 border border-slate-600">
+                    <i class="fa-solid fa-sliders text-indigo-400"></i>
+                    <span class="hidden sm:inline">Quality Settings</span>
+                </button>
+
+                <!-- Admin Account Management Button (Only for Admins) -->
+                <button id="btn-manage-accounts" onclick="openAccountManager()" class="hidden px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-medium text-slate-200 transition flex items-center gap-1.5 border border-slate-600">
+                    <i class="fa-solid fa-users-gear text-emerald-400"></i>
+                    <span class="hidden sm:inline">User Accounts</span>
+                </button>
+
+                <!-- Active User Badge -->
+                <div class="flex items-center space-x-2 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-700/60">
+                    <i class="fa-solid fa-circle-user text-indigo-400 text-sm"></i>
+                    <span id="header-user-display" class="text-xs font-semibold text-slate-200">Admin</span>
+                    <span id="header-role-badge" class="text-[10px] bg-indigo-900/80 text-indigo-200 px-1.5 py-0.2 rounded font-medium">ADMIN</span>
+                </div>
+
+                <!-- Sign Out Button -->
+                <button onclick="logout()" class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition" title="Sign Out">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- LEFT COLUMN: Live Camera Studio (5 Cols) -->
+        <section class="lg:col-span-5 flex flex-col space-y-4">
+            
+            <!-- Camera Card Container -->
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl flex flex-col items-center">
+                
+                <!-- Viewport Header Info -->
+                <div class="w-full flex justify-between items-center mb-3">
+                    <div class="flex items-center space-x-2">
+                        <span id="camera-status-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span id="camera-status-text" class="text-xs font-medium text-slate-300">Live Viewport</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-[11px] bg-slate-700 text-slate-300 px-2 py-0.5 rounded font-mono border border-slate-600">4:5 Aspect Ratio</span>
+                        <span id="camera-resolution-badge" class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded font-mono">1920x1080</span>
+                    </div>
+                </div>
+
+                <!-- 4:5 Aspect Ratio Video Camera Frame -->
+                <div class="relative w-full max-w-[360px] aspect-[4/5] bg-black rounded-xl overflow-hidden shadow-inner border border-slate-700 group">
+                    
+                    <!-- Flash Effect Layer -->
+                    <div id="flash-effect" class="flash-overlay"></div>
+
+                    <!-- Live Video Element -->
+                    <video id="webcam" autoplay playsinline muted class="w-full h-full object-cover transform -scale-x-100"></video>
+                    
+                    <!-- Hidden Render Canvas for Cropping -->
+                    <canvas id="crop-canvas" class="hidden"></canvas>
+
+                    <!-- Face Guide Oval Overlay -->
+                    <div class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
+                        <div class="w-48 h-64 border-2 border-dashed border-indigo-400/50 rounded-[50%] flex items-center justify-center transition-all duration-300">
+                            <div class="w-full border-t border-indigo-400/30"></div>
+                        </div>
+                        <p class="text-[11px] font-medium text-white/70 bg-black/50 px-2 py-0.5 rounded mt-3 backdrop-blur-sm">Align Head & Shoulders</p>
+                    </div>
+
+                    <!-- AI Auto Centering Badge -->
+                    <div id="ai-active-badge" class="absolute top-3 left-3 bg-indigo-600/90 backdrop-blur-md text-white text-[10px] font-semibold px-2 py-1 rounded-md shadow border border-indigo-400/40 flex items-center gap-1.5">
+                        <i class="fa-solid fa-wand-magic-sparkles text-amber-300"></i>
+                        <span>AI Auto-Center ON</span>
+                    </div>
+
+                    <!-- Selected Target Student Bar Overlay -->
+                    <div id="camera-target-banner" class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-3 text-center">
+                        <p class="text-[10px] font-semibold text-indigo-300 uppercase tracking-wider">Active Target Student</p>
+                        <h3 id="target-student-name" class="text-sm font-bold text-white truncate">No Student Selected</h3>
+                        <p id="target-student-sub" class="text-xs text-slate-300 truncate">Select a student from roster to begin</p>
+                    </div>
+
+                    <!-- Countdown Overlay Canvas -->
+                    <div id="countdown-overlay" class="absolute inset-0 bg-black/60 backdrop-blur-sm hidden flex-col items-center justify-center z-20">
+                        <span id="countdown-number" class="text-7xl font-extrabold text-white animate-bounce">3</span>
+                        <p class="text-xs text-indigo-300 font-medium mt-2">Get Ready!</p>
+                    </div>
+                </div>
+
+                <!-- Camera Controls & AI Toggles -->
+                <div class="w-full max-w-[360px] mt-4 space-y-3">
+                    
+                    <!-- AI Auto-Centering Switch -->
+                    <div class="flex items-center justify-between bg-slate-900/80 px-3.5 py-2 rounded-xl border border-slate-700/70">
+                        <div class="flex items-center space-x-2">
+                            <i class="fa-solid fa-face-smile text-indigo-400 text-sm"></i>
+                            <span class="text-xs font-medium text-slate-200">AI Face Auto-Centering</span>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="toggle-ai-centering" class="sr-only peer" checked onchange="toggleAiCentering()">
+                            <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                    </div>
+
+                    <!-- Primary Capture Action Buttons -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <!-- Instant Capture -->
+                        <button id="btn-snap-instant" onclick="executeCapture()" class="py-3 px-4 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-camera"></i>
+                            <span>Snap Photo</span>
+                        </button>
+
+                        <!-- 3s Timer Capture -->
+                        <button id="btn-snap-timer" onclick="startCountdownAndCapture()" class="py-3 px-4 bg-slate-700 hover:bg-slate-600 active:scale-[0.98] text-slate-100 font-semibold rounded-xl transition flex items-center justify-center gap-2 border border-slate-600">
+                            <i class="fa-solid fa-stopwatch text-amber-400"></i>
+                            <span>3s Timer</span>
+                        </button>
+                    </div>
+
+                    <!-- Restart Camera Button -->
+                    <button onclick="startCamera()" class="w-full py-1.5 text-xs text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-rotate-right"></i>
+                        <span>Restart / Re-detect Camera</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Last Captured Quick Preview -->
+            <div id="last-captured-card" class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-check text-emerald-400"></i>
+                        Captured Snapshot
+                    </h4>
+                    <span id="captured-timestamp" class="text-[10px] text-slate-400">Just now</span>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <img id="last-captured-thumb" src="" alt="Captured" class="w-16 h-20 object-cover rounded-lg border border-slate-600 bg-black">
+                    <div class="flex-1 min-w-0">
+                        <p id="captured-student-name" class="text-xs font-bold text-white truncate">Student Name</p>
+                        <p id="captured-student-filename" class="text-[10px] text-slate-400 font-mono truncate">filename.jpg</p>
+                        <div class="flex space-x-2 mt-2">
+                            <button onclick="downloadCurrentSinglePhoto()" class="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-[11px] font-medium text-slate-200 rounded transition flex items-center gap-1">
+                                <i class="fa-solid fa-download text-xs text-indigo-400"></i> Save
+                            </button>
+                            <button onclick="retakePhoto()" class="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[11px] font-medium rounded transition flex items-center gap-1 border border-rose-500/30">
+                                <i class="fa-solid fa-arrow-rotate-left text-xs"></i> Retake
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT COLUMN: Student Roster & Data Operations (7 Cols) -->
+        <section class="lg:col-span-7 flex flex-col space-y-4">
+            
+            <!-- Action Toolbar & Combined Download Button -->
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl space-y-4">
+                
+                <!-- Primary Import/Export Bar -->
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    
+                    <div class="flex items-center space-x-2">
+                        <!-- Excel Import -->
+                        <label class="px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-xs font-medium text-slate-100 rounded-xl cursor-pointer transition flex items-center gap-2 border border-slate-600">
+                            <i class="fa-solid fa-file-excel text-emerald-400 text-sm"></i>
+                            <span>Import Excel</span>
+                            <input type="file" id="excel-file-input" accept=".xlsx, .xls" class="hidden" onchange="importExcel(event)">
+                        </label>
+
+                        <!-- Download Sample Template -->
+                        <button onclick="downloadSampleExcel()" class="px-3 py-2 bg-slate-900/80 hover:bg-slate-900 text-xs font-medium text-slate-300 rounded-xl transition border border-slate-700 flex items-center gap-1.5" title="Download Excel Roster Template">
+                            <i class="fa-solid fa-download text-slate-400"></i>
+                            <span class="hidden sm:inline">Sample Excel</span>
+                        </button>
+                    </div>
+
+                    <div class="flex items-center space-x-2">
+                        <!-- Single ZIP Export Button (Photos + Excel Report Combined) -->
+                        <button onclick="exportExcelAndPhotosZip()" class="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white font-semibold text-xs rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center gap-2">
+                            <i class="fa-solid fa-file-zipper text-sm"></i>
+                            <span>Download All (Excel + Photos ZIP)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filters & Search Row -->
+                <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-2 border-t border-slate-700/60">
+                    
+                    <!-- Search Input -->
+                    <div class="sm:col-span-4 relative">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-xs text-slate-400"></i>
+                        <input type="text" id="search-input" oninput="handleFilterChange()" placeholder="Search Name or Code..." class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    </div>
+
+                    <!-- Grade Filter -->
+                    <div class="sm:col-span-3">
+                        <select id="filter-grade" onchange="handleFilterChange()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            <option value="ALL">All Grades</option>
+                        </select>
+                    </div>
+
+                    <!-- Class Filter -->
+                    <div class="sm:col-span-3">
+                        <select id="filter-class" onchange="handleFilterChange()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            <option value="ALL">All Classes</option>
+                        </select>
+                    </div>
+
+                    <!-- Status Filter -->
+                    <div class="sm:col-span-2">
+                        <select id="filter-status" onchange="handleFilterChange()" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            <option value="ALL">All</option>
+                            <option value="CAPTURED">Captured</option>
+                            <option value="PENDING">Pending</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Roster Table List Card -->
+            <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl flex-1 flex flex-col min-h-[420px]">
+                
+                <!-- Roster Stats Bar -->
+                <div class="flex items-center justify-between mb-3 text-xs text-slate-400">
+                    <div>
+                        <span>Showing <strong id="stats-count" class="text-slate-100">0</strong> students</span>
+                        <span class="mx-1.5">•</span>
+                        <span class="text-emerald-400 font-medium"><strong id="stats-captured">0</strong> Done</span>
+                        <span class="mx-1.5">•</span>
+                        <span class="text-amber-400 font-medium"><strong id="stats-pending">0</strong> Remaining</span>
+                    </div>
+
+                    <div class="flex items-center space-x-2">
+                        <button onclick="loadDemoRoster()" class="text-indigo-400 hover:underline text-[11px]">Load Demo Roster</button>
+                        <span>|</span>
+                        <button onclick="clearRosterConfirm()" class="text-rose-400 hover:underline text-[11px]">Clear All</button>
+                    </div>
+                </div>
+
+                <!-- Scrollable Roster Table -->
+                <div class="flex-1 overflow-y-auto custom-scrollbar border border-slate-700/80 rounded-xl bg-slate-900/60 max-h-[480px]">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead class="bg-slate-800/90 sticky top-0 border-b border-slate-700 text-slate-400 font-medium">
+                            <tr>
+                                <th class="p-3 w-12 text-center">Photo</th>
+                                <th class="p-3">Code</th>
+                                <th class="p-3">Student Name</th>
+                                <th class="p-3">Grade</th>
+                                <th class="p-3">Class</th>
+                                <th class="p-3">Language</th>
+                                <th class="p-3 text-center">Status</th>
+                                <th class="p-3 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="roster-table-body" class="divide-y divide-slate-800/80 text-slate-200">
+                            <!-- Dynamic Roster Rows Injected Here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- LOGIN MODAL -->
+    <div id="login-modal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+            <div class="text-center mb-6">
+                <div class="w-14 h-14 bg-indigo-600/20 border border-indigo-500/30 rounded-2xl flex items-center justify-center mx-auto mb-3 text-indigo-400 text-2xl">
+                    <i class="fa-solid fa-lock"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white">Student Photo Studio</h2>
+                <p class="text-xs text-slate-400 mt-1">Please sign in with your account credentials</p>
+            </div>
+
+            <form onsubmit="handleLoginSubmit(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Username</label>
+                    <input type="text" id="login-username" required placeholder="Enter username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Password</label>
+                    <input type="password" id="login-password" required placeholder="Enter password" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500">
+                </div>
+
+                <button type="submit" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm rounded-xl transition shadow-lg shadow-indigo-600/30">
+                    Sign In
+                </button>
+            </form>
+
+            <div class="mt-6 pt-4 border-t border-slate-700/60 text-center">
+                <p class="text-[11px] text-slate-400 mb-2">Quick Demo Accounts:</p>
+                <div class="flex justify-center space-x-2">
+                    <button onclick="fillLogin('admin', 'admin123')" class="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-[11px] text-indigo-300 rounded">Admin</button>
+                    <button onclick="fillLogin('photographer', 'photo123')" class="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-[11px] text-emerald-300 rounded">Photographer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ACCOUNT MANAGER MODAL (Admin Only) -->
+    <div id="accounts-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-700">
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-users-gear text-emerald-400"></i> User Account Management
+                </h3>
+                <button onclick="closeAccountManager()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <!-- Create Account Form -->
+            <form onsubmit="handleCreateAccount(event)" class="bg-slate-900/60 border border-slate-700 p-3.5 rounded-xl space-y-3">
+                <h4 class="text-xs font-semibold text-slate-300">Add New Account</h4>
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="new-user-fullname" required placeholder="Full Name" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100">
+                    <input type="text" id="new-user-username" required placeholder="Username" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100">
+                    <input type="password" id="new-user-password" required placeholder="Password" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100">
+                    <select id="new-user-role" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100">
+                        <option value="photographer">Photographer</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <button type="submit" class="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-lg transition">Create Account</button>
+            </form>
+
+            <!-- Accounts List -->
+            <div>
+                <h4 class="text-xs font-semibold text-slate-300 mb-2">Existing Accounts</h4>
+                <div id="accounts-list" class="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
+                    <!-- Dynamic Accounts -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- QUALITY & RESOLUTION SETTINGS MODAL -->
+    <div id="quality-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5">
+            <div class="flex justify-between items-center pb-3 border-b border-slate-700">
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-indigo-400"></i> Quality & Resolution Settings
+                </h3>
+                <button onclick="closeQualityModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Captured Image Resolution (4:5 Ratio)</label>
+                    <select id="setting-resolution" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+                        <option value="1200x1500">1200 x 1500 px (Standard HD Print)</option>
+                        <option value="1600x2000" selected>1600 x 2000 px (High Detail - Recommended)</option>
+                        <option value="2400x3000">2400 x 3000 px (Ultra High 4K Print)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <div class="flex justify-between text-xs font-medium text-slate-300 mb-1">
+                        <span>JPEG Compression Quality</span>
+                        <span id="quality-val-display" class="text-indigo-400 font-bold">98%</span>
+                    </div>
+                    <input type="range" id="setting-quality" min="70" max="100" value="98" oninput="document.getElementById('quality-val-display').innerText = this.value + '%'" class="w-full accent-indigo-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1">Export Image Format</label>
+                    <select id="setting-format" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+                        <option value="image/jpeg">JPEG (.jpg) - Optimized</option>
+                        <option value="image/png">PNG (.png) - Uncompressed Lossless</option>
+                    </select>
+                </div>
+            </div>
+
+            <button onclick="saveQualitySettings()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl transition">Save Settings</button>
+        </div>
+    </div>
+
+    <!-- CUSTOM CONFIRMATION MODAL -->
+    <div id="confirm-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-sm w-full p-5 shadow-2xl text-center space-y-4">
+            <div class="w-12 h-12 bg-amber-500/20 text-amber-400 rounded-full flex items-center justify-center mx-auto text-xl">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 id="confirm-modal-title" class="text-base font-bold text-white">Are you sure?</h3>
+            <p id="confirm-modal-msg" class="text-xs text-slate-300">This action cannot be undone.</p>
+            <div class="flex space-x-2 pt-2">
+                <button onclick="closeConfirmModal(false)" class="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold rounded-xl">Cancel</button>
+                <button id="confirm-modal-act-btn" onclick="closeConfirmModal(true)" class="flex-1 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION CONTAINER -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+    <script>
+        // Global Application State
+        let students = [];
+        let activeStudentId = null;
+        let currentUser = null;
+        let users = [];
+        
+        let cameraStream = null;
+        let blazeModel = null;
+        let aiFaceCenteringEnabled = true;
+
+        let lastCapturedBlob = null;
+        let lastCapturedStudent = null;
+
+        let qualityConfig = {
+            width: 1600,
+            height: 2000,
+            quality: 0.98,
+            mimeType: 'image/jpeg',
+            ext: 'jpg'
+        };
+
+        let confirmCallback = null;
+
+        // Initialize App
+        window.addEventListener('load', async () => {
+            loadFromLocalStorage();
+            initUsers();
+            checkAuthSession();
+            await startCamera();
+            loadBlazeFaceModel();
+        });
+
+        /* ================= AUTHENTICATION & USERS ================= */
+        function initUsers() {
+            const savedUsers = localStorage.getItem('studio_users');
+            if (savedUsers) {
+                try { users = JSON.parse(savedUsers); } catch(e){}
+            }
+            if (!users || users.length === 0) {
+                users = [
+                    { username: 'admin', password: 'admin123', name: 'System Admin', role: 'admin' },
+                    { username: 'photographer', password: 'photo123', name: 'School Photographer', role: 'photographer' }
+                ];
+                saveUsersToStorage();
+            }
+        }
+
+        function saveUsersToStorage() {
+            try { localStorage.setItem('studio_users', JSON.stringify(users)); } catch(e){}
+        }
+
+        function checkAuthSession() {
+            const session = localStorage.getItem('studio_active_user');
+            if (session) {
+                try {
+                    currentUser = JSON.parse(session);
+                    document.getElementById('login-modal').classList.add('hidden');
+                    updateUserHeader();
+                    return;
+                } catch(e){}
+            }
+            document.getElementById('login-modal').classList.remove('hidden');
+        }
+
+        function handleLoginSubmit(e) {
+            e.preventDefault();
+            const u = document.getElementById('login-username').value.trim();
+            const p = document.getElementById('login-password').value.trim();
+
+            const found = users.find(x => x.username.toLowerCase() === u.toLowerCase() && x.password === p);
+            if (found) {
+                currentUser = found;
+                try { localStorage.setItem('studio_active_user', JSON.stringify(currentUser)); } catch(e){}
+                document.getElementById('login-modal').classList.add('hidden');
+                updateUserHeader();
+                showToast(`Welcome back, ${currentUser.name}!`, 'success');
+            } else {
+                showToast('Invalid username or password', 'error');
+            }
+        }
+
+        function fillLogin(u, p) {
+            document.getElementById('login-username').value = u;
+            document.getElementById('login-password').value = p;
+        }
+
+        function logout() {
+            currentUser = null;
+            try { localStorage.removeItem('studio_active_user'); } catch(e){}
+            document.getElementById('login-modal').classList.remove('hidden');
+        }
+
+        function updateUserHeader() {
+            if (!currentUser) return;
+            document.getElementById('header-user-display').innerText = currentUser.name;
+            document.getElementById('header-role-badge').innerText = currentUser.role.toUpperCase();
+            
+            const adminBtn = document.getElementById('btn-manage-accounts');
+            if (currentUser.role === 'admin') {
+                adminBtn.classList.remove('hidden');
+            } else {
+                adminBtn.classList.add('hidden');
+            }
+        }
+
+        function openAccountManager() {
+            if (currentUser?.role !== 'admin') return;
+            renderAccountList();
+            document.getElementById('accounts-modal').classList.remove('hidden');
+        }
+
+        function closeAccountManager() {
+            document.getElementById('accounts-modal').classList.add('hidden');
+        }
+
+        function renderAccountList() {
+            const list = document.getElementById('accounts-list');
+            list.innerHTML = users.map(u => `
+                <div class="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-lg border border-slate-700/60 text-xs">
+                    <div>
+                        <span class="font-semibold text-white">${u.name}</span>
+                        <span class="text-slate-400">(@${u.username})</span>
+                        <span class="ml-2 text-[10px] px-1.5 py-0.2 rounded font-medium ${u.role === 'admin' ? 'bg-indigo-900 text-indigo-300' : 'bg-emerald-900 text-emerald-300'}">${u.role}</span>
+                    </div>
+                    ${u.username !== 'admin' ? `<button onclick="deleteAccount('${u.username}')" class="text-rose-400 hover:text-rose-300"><i class="fa-solid fa-trash"></i></button>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function handleCreateAccount(e) {
+            e.preventDefault();
+            const fn = document.getElementById('new-user-fullname').value.trim();
+            const un = document.getElementById('new-user-username').value.trim();
+            const pw = document.getElementById('new-user-password').value.trim();
+            const rl = document.getElementById('new-user-role').value;
+
+            if (users.some(x => x.username.toLowerCase() === un.toLowerCase())) {
+                showToast('Username already exists', 'error');
+                return;
+            }
+
+            users.push({ username: un, password: pw, name: fn, role: rl });
+            saveUsersToStorage();
+            renderAccountList();
+            showToast('User account created', 'success');
+            e.target.reset();
+        }
+
+        function deleteAccount(un) {
+            users = users.filter(x => x.username !== un);
+            saveUsersToStorage();
+            renderAccountList();
+            showToast('Account removed', 'info');
+        }
+
+        /* ================= CAMERA & AI FACE RECOGNITION ================= */
+        async function startCamera() {
+            const video = document.getElementById('webcam');
+            const statusDot = document.getElementById('camera-status-dot');
+            const statusText = document.getElementById('camera-status-text');
+
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+            }
+
+            try {
+                // Constraints asking for highest quality 1080p/4K feeds
+                const constraints = {
+                    video: {
+                        width: { ideal: 3840 },
+                        height: { ideal: 2160 },
+                        facingMode: "user"
+                    },
+                    audio: false
+                };
+
+                cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = cameraStream;
+                
+                video.onloadedmetadata = () => {
+                    document.getElementById('camera-resolution-badge').innerText = `${video.videoWidth}x${video.videoHeight}`;
+                    statusDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse";
+                    statusText.innerText = "Camera Active";
+                };
+            } catch (err) {
+                console.warn("High-res video constraint failed, attempting default camera...", err);
+                try {
+                    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                    video.srcObject = cameraStream;
+                    statusDot.className = "w-2.5 h-2.5 rounded-full bg-amber-500";
+                    statusText.innerText = "Standard Camera";
+                } catch(e) {
+                    statusDot.className = "w-2.5 h-2.5 rounded-full bg-rose-500";
+                    statusText.innerText = "Camera Error / Blocked";
+                    showToast("Webcam access denied or unavailable", "error");
+                }
+            }
+        }
+
+        async function loadBlazeFaceModel() {
+            try {
+                if (window.blazeface) {
+                    blazeModel = await blazeface.load();
+                }
+            } catch(e) {
+                console.warn("BlazeFace AI model loading skipped:", e);
+            }
+        }
+
+        function toggleAiCentering() {
+            aiFaceCenteringEnabled = document.getElementById('toggle-ai-centering').checked;
+            const badge = document.getElementById('ai-active-badge');
+            if (aiFaceCenteringEnabled) {
+                badge.classList.remove('hidden');
+                showToast("AI Auto-Centering Enabled", "info");
+            } else {
+                badge.classList.add('hidden');
+                showToast("AI Auto-Centering Disabled", "info");
+            }
+        }
+
+        /* ================= PHOTO CAPTURE & CROP ENGINE ================= */
+        function startCountdownAndCapture() {
+            if (!activeStudentId) {
+                showToast("Select a student from the roster first!", "error");
+                return;
+            }
+
+            const overlay = document.getElementById('countdown-overlay');
+            const numberEl = document.getElementById('countdown-number');
+            overlay.classList.remove('hidden');
+            overlay.classList.add('flex');
+
+            let count = 3;
+            numberEl.innerText = count;
+
+            const timer = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    numberEl.innerText = count;
+                } else {
+                    clearInterval(timer);
+                    overlay.classList.add('hidden');
+                    overlay.classList.remove('flex');
+                    executeCapture();
+                }
+            }, 900);
+        }
+
+        async function executeCapture() {
+            if (!activeStudentId) {
+                showToast("Select a student from the roster first!", "error");
+                return;
+            }
+
+            const video = document.getElementById('webcam');
+            if (!video.videoWidth || !video.videoHeight) {
+                showToast("Camera feed not ready", "error");
+                return;
+            }
+
+            // Visual Flash Animation
+            const flash = document.getElementById('flash-effect');
+            flash.classList.add('animate-flash');
+            setTimeout(() => flash.classList.remove('animate-flash'), 400);
+
+            const canvas = document.getElementById('crop-canvas');
+            const ctx = canvas.getContext('2d');
+
+            const vw = video.videoWidth;
+            const vh = video.videoHeight;
+
+            // Target dimensions (Strict 4:5 aspect ratio)
+            const targetW = qualityConfig.width;
+            const targetH = qualityConfig.height;
+
+            canvas.width = targetW;
+            canvas.height = targetH;
+
+            // Calculate center crop box (4:5) in original video space
+            let cropW, cropH, cropX, cropY;
+
+            if (vw / vh > 0.8) { 
+                // Widescreen video stream: height is limiting
+                cropH = vh;
+                cropW = vh * 0.8;
+                cropY = 0;
+                cropX = (vw - cropW) / 2;
+            } else {
+                // Tall video stream: width is limiting
+                cropW = vw;
+                cropH = vw / 0.8;
+                cropX = 0;
+                cropY = (vh - cropH) / 2;
+            }
+
+            // AI Face Auto-Centering Adjustment (if active & face detected)
+            if (aiFaceCenteringEnabled && blazeModel) {
+                try {
+                    const predictions = await blazeModel.estimateFaces(video, false);
+                    if (predictions && predictions.length > 0) {
+                        const face = predictions[0];
+                        const start = face.topLeft;
+                        const end = face.bottomRight;
+                        const faceCenterX = start[0] + (end[0] - start[0]) / 2;
+                        const faceCenterY = start[1] + (end[1] - start[1]) / 2;
+
+                        // Center crop box horizontally on face
+                        cropX = Math.max(0, Math.min(vw - cropW, faceCenterX - cropW / 2));
+                        
+                        // Vertical placement: place face center roughly 38% down for natural headroom
+                        cropY = Math.max(0, Math.min(vh - cropH, faceCenterY - cropH * 0.38));
+                    }
+                } catch(e) {
+                    console.warn("AI face detection fallback to default center crop:", e);
+                }
+            }
+
+            // Draw webcam frame onto canvas with horizontal mirror flip compensation
+            ctx.save();
+            ctx.scale(-1, 1);
+            // Inverted X draw due to scale(-1, 1)
+            ctx.drawImage(video, cropX, cropY, cropW, cropH, -targetW, 0, targetW, targetH);
+            ctx.restore();
+
+            // Export to Blob & Data URL
+            const dataUrl = canvas.toDataURL(qualityConfig.mimeType, qualityConfig.quality);
+            canvas.toBlob((blob) => {
+                lastCapturedBlob = blob;
+                savePhotoToStudent(activeStudentId, dataUrl);
+            }, qualityConfig.mimeType, qualityConfig.quality);
+        }
+
+        function savePhotoToStudent(studentId, dataUrl) {
+            const student = students.find(s => s.id === studentId);
+            if (!student) return;
+
+            student.photo = dataUrl;
+            lastCapturedStudent = student;
+            saveToLocalStorage();
+            renderRoster();
+
+            // Update Snapshot Card
+            document.getElementById('last-captured-card').classList.remove('hidden');
+            document.getElementById('last-captured-thumb').src = dataUrl;
+            document.getElementById('captured-student-name').innerText = student.name;
+            document.getElementById('captured-student-filename').innerText = getStudentPhotoFilename(student);
+            document.getElementById('captured-timestamp').innerText = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+            showToast(`Captured photo for ${student.name}`, "success");
+
+            // Auto-advance to next uncaptured student
+            navigateNextUncaptured();
+        }
+
+        function retakePhoto() {
+            if (!lastCapturedStudent) return;
+            lastCapturedStudent.photo = null;
+            selectStudent(lastCapturedStudent.id);
+            saveToLocalStorage();
+            renderRoster();
+            document.getElementById('last-captured-card').classList.add('hidden');
+            showToast("Photo cleared for retake", "info");
+        }
+
+        function downloadCurrentSinglePhoto() {
+            if (!lastCapturedStudent || !lastCapturedStudent.photo) return;
+            const filename = getStudentPhotoFilename(lastCapturedStudent);
+            saveAs(lastCapturedStudent.photo, filename);
+        }
+
+        /* ================= ROSTER MANAGEMENT & FILTERS ================= */
+        function renderRoster() {
+            const tableBody = document.getElementById('roster-table-body');
+            const search = document.getElementById('search-input').value.toLowerCase().trim();
+            const gradeFilter = document.getElementById('filter-grade').value;
+            const classFilter = document.getElementById('filter-class').value;
+            const statusFilter = document.getElementById('filter-status').value;
+
+            // Filter Students
+            const filtered = students.filter(s => {
+                const matchSearch = !search || s.name.toLowerCase().includes(search) || s.code.toString().toLowerCase().includes(search);
+                const matchGrade = gradeFilter === 'ALL' || s.grade.toString() === gradeFilter;
+                const matchClass = classFilter === 'ALL' || s.studentClass.toString() === classFilter;
+                const matchStatus = statusFilter === 'ALL' || (statusFilter === 'CAPTURED' ? !!s.photo : !s.photo);
+                return matchSearch && matchGrade && matchClass && matchStatus;
+            });
+
+            // Update Counts
+            const capturedCount = students.filter(s => !!s.photo).length;
+            document.getElementById('stats-count').innerText = filtered.length;
+            document.getElementById('stats-captured').innerText = capturedCount;
+            document.getElementById('stats-pending').innerText = students.length - capturedCount;
+
+            if (filtered.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="text-center py-12 text-slate-500">
+                            <i class="fa-solid fa-folder-open text-3xl mb-2 block text-slate-600"></i>
+                            No student records found matching filters.
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            tableBody.innerHTML = filtered.map(s => {
+                const isActive = s.id === activeStudentId;
+                return `
+                    <tr onclick="selectStudent('${s.id}')" class="cursor-pointer transition hover:bg-slate-800/80 ${isActive ? 'bg-indigo-950/70 border-l-4 border-indigo-500' : ''}">
+                        <td class="p-2.5 text-center">
+                            ${s.photo ? `<img src="${s.photo}" class="w-8 h-10 object-cover rounded mx-auto border border-slate-600 bg-black">` : `<div class="w-8 h-10 rounded bg-slate-800 border border-slate-700 mx-auto flex items-center justify-center text-slate-600"><i class="fa-solid fa-user text-xs"></i></div>`}
+                        </td>
+                        <td class="p-2.5 font-mono text-slate-300 font-medium">${s.code}</td>
+                        <td class="p-2.5 font-semibold text-white">${s.name}</td>
+                        <td class="p-2.5 text-slate-300">${s.grade}</td>
+                        <td class="p-2.5 text-slate-300">${s.studentClass}</td>
+                        <td class="p-2.5 text-slate-400 text-[11px]">${s.studyLanguage || '-'}</td>
+                        <td class="p-2.5 text-center">
+                            ${s.photo ? `<span class="px-2 py-0.5 text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800/60 rounded-full font-semibold">Captured</span>` : `<span class="px-2 py-0.5 text-[10px] bg-amber-950 text-amber-300 border border-amber-800/60 rounded-full font-semibold">Pending</span>`}
+                        </td>
+                        <td class="p-2.5 text-right">
+                            <button onclick="event.stopPropagation(); selectStudent('${s.id}')" class="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 text-[11px] rounded font-medium border border-indigo-500/30">
+                                Select
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function selectStudent(id) {
+            activeStudentId = id;
+            const student = students.find(s => s.id === id);
+            if (student) {
+                document.getElementById('target-student-name').innerText = student.name;
+                document.getElementById('target-student-sub').innerText = `Code: ${student.code} | Grade: ${student.grade} | Class: ${student.studentClass}`;
+            }
+            renderRoster();
+        }
+
+        function navigateNextUncaptured() {
+            const pending = students.find(s => !s.photo);
+            if (pending) {
+                selectStudent(pending.id);
+            }
+        }
+
+        function populateGradeClassFilters() {
+            const grades = [...new Set(students.map(s => s.grade))].filter(Boolean).sort();
+            const classes = [...new Set(students.map(s => s.studentClass))].filter(Boolean).sort();
+
+            const gradeSelect = document.getElementById('filter-grade');
+            gradeSelect.innerHTML = '<option value="ALL">All Grades</option>' + grades.map(g => `<option value="${g}">Grade ${g}</option>`).join('');
+
+            const classSelect = document.getElementById('filter-class');
+            classSelect.innerHTML = '<option value="ALL">All Classes</option>' + classes.map(c => `<option value="${c}">Class ${c}</option>`).join('');
+        }
+
+        function handleFilterChange() {
+            renderRoster();
+        }
+
+        /* ================= UNIFORM FILENAME GENERATOR ================= */
+        function getStudentPhotoFilename(student) {
+            const clean = (str) => (str || '').toString().trim().replace(/[^a-z0-9_-]/gi, '_');
+            const code = clean(student.code);
+            const name = clean(student.name);
+            const grade = clean(student.grade);
+            const cls = clean(student.studentClass);
+            const lang = clean(student.studyLanguage);
+
+            let base = `${code}_${name}_${grade}_${cls}`;
+            if (lang) base += `_${lang}`;
+            return `${base}.${qualityConfig.ext}`;
+        }
+
+        /* ================= EXCEL IMPORT & COMBINED ZIP EXPORT ================= */
+        function importExcel(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                    if (json.length === 0) {
+                        showToast("Excel file is empty", "error");
+                        return;
+                    }
+
+                    students = json.map((row, idx) => ({
+                        id: 'stu_' + Date.now() + '_' + idx,
+                        code: row['Code'] || row['Student Code'] || row['ID'] || `STU${1000 + idx}`,
+                        name: row['Name'] || row['Student Name'] || row['Full Name'] || `Student ${idx + 1}`,
+                        grade: row['Grade'] || row['Grade Level'] || '10',
+                        studentClass: row['Class'] || row['Section'] || 'A',
+                        studyLanguage: row['Study Language'] || row['Language'] || row['Lang'] || 'English',
+                        photo: null
+                    }));
+
+                    saveToLocalStorage();
+                    populateGradeClassFilters();
+                    if (students.length > 0) selectStudent(students[0].id);
+                    renderRoster();
+                    showToast(`Successfully imported ${students.length} students!`, "success");
+                } catch(err) {
+                    showToast("Failed to parse Excel file", "error");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function downloadSampleExcel() {
+            const sampleData = [
+                { "Code": "1001", "Name": "Alan Kurdo", "Grade": "10", "Class": "10-A", "Study Language": "Kurdish" },
+                { "Code": "1002", "Name": "Sara Ahmed", "Grade": "10", "Class": "10-A", "Study Language": "English" },
+                { "Code": "1003", "Name": "Diyar Bakir", "Grade": "10", "Class": "10-B", "Study Language": "Kurdish" },
+                { "Code": "1004", "Name": "Lana Zana", "Grade": "11", "Class": "11-A", "Study Language": "English" },
+                { "Code": "1005", "Name": "Aram Azad", "Grade": "11", "Class": "11-B", "Study Language": "Kurdish" }
+            ];
+
+            const ws = XLSX.utils.json_to_sheet(sampleData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Students");
+            XLSX.writeFile(wb, "Sample_Student_Roster.xlsx");
+            showToast("Downloaded Sample Excel Template", "info");
+        }
+
+        async function exportExcelAndPhotosZip() {
+            if (students.length === 0) {
+                showToast("No student data available to export", "error");
+                return;
+            }
+
+            const capturedStudents = students.filter(s => !!s.photo);
+            if (capturedStudents.length === 0) {
+                showToast("No captured student photos found to export!", "error");
+                return;
+            }
+
+            showToast("Generating ZIP Archive with Photos & Excel Report...", "info");
+
+            const zip = new JSZip();
+            const photosFolder = zip.folder("Student_Photos");
+
+            // Build Excel Data Log matching uniform filenames
+            const reportRows = students.map(s => ({
+                "Student Code": s.code,
+                "Student Name": s.name,
+                "Grade": s.grade,
+                "Class": s.studentClass,
+                "Study Language": s.studyLanguage || '',
+                "Photo Status": s.photo ? "Captured" : "Pending",
+                "Image Filename": s.photo ? getStudentPhotoFilename(s) : "N/A"
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(reportRows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Photo Report");
+            const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+            zip.file("Student_Photography_Report.xlsx", excelBuffer);
+
+            // Add Captured Photos into ZIP
+            capturedStudents.forEach(s => {
+                const filename = getStudentPhotoFilename(s);
+                const base64Data = s.photo.split(',')[1];
+                photosFolder.file(filename, base64Data, { base64: true });
+            });
+
+            // Generate ZIP download
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, `Student_Photos_Export_${new Date().toISOString().slice(0,10)}.zip`);
+            showToast(`Exported ${capturedStudents.length} photos and Excel log!`, "success");
+        }
+
+        /* ================= SETTINGS & LOCAL STORAGE ================= */
+        function openQualityModal() { document.getElementById('quality-modal').classList.remove('hidden'); }
+        function closeQualityModal() { document.getElementById('quality-modal').classList.add('hidden'); }
+
+        function saveQualitySettings() {
+            const res = document.getElementById('setting-resolution').value.split('x');
+            qualityConfig.width = parseInt(res[0]);
+            qualityConfig.height = parseInt(res[1]);
+            qualityConfig.quality = parseInt(document.getElementById('setting-quality').value) / 100;
+            qualityConfig.mimeType = document.getElementById('setting-format').value;
+            qualityConfig.ext = qualityConfig.mimeType === 'image/png' ? 'png' : 'jpg';
+
+            closeQualityModal();
+            showToast("Saved Photo Quality & Resolution Settings", "success");
+        }
+
+        function loadDemoRoster() {
+            students = [
+                { id: 'd1', code: '1001', name: 'Alan Kurdo', grade: '10', studentClass: '10-A', studyLanguage: 'Kurdish', photo: null },
+                { id: 'd2', code: '1002', name: 'Sara Ahmed', grade: '10', studentClass: '10-A', studyLanguage: 'English', photo: null },
+                { id: 'd3', code: '1003', name: 'Diyar Bakir', grade: '10', studentClass: '10-B', studyLanguage: 'Kurdish', photo: null },
+                { id: 'd4', code: '1004', name: 'Lana Zana', grade: '11', studentClass: '11-A', studyLanguage: 'English', photo: null },
+                { id: 'd5', code: '1005', name: 'Aram Azad', grade: '11', studentClass: '11-B', studyLanguage: 'Kurdish', photo: null }
+            ];
+            saveToLocalStorage();
+            populateGradeClassFilters();
+            selectStudent(students[0].id);
+            renderRoster();
+            showToast("Loaded Demo Student Roster", "info");
+        }
+
+        function clearRosterConfirm() {
+            showConfirmModal("Clear Roster Data", "Are you sure you want to clear all student records and captured photos?", () => {
+                students = [];
+                activeStudentId = null;
+                saveToLocalStorage();
+                populateGradeClassFilters();
+                renderRoster();
+                document.getElementById('target-student-name').innerText = "No Student Selected";
+                document.getElementById('target-student-sub').innerText = "Select a student from roster to begin";
+                showToast("Cleared all student records", "info");
+            });
+        }
+
+        function saveToLocalStorage() {
+            try {
+                localStorage.setItem('studio_students_data', JSON.stringify(students));
+            } catch(e) {
+                console.warn("Storage quota exceeded or restricted", e);
+            }
+        }
+
+        function loadFromLocalStorage() {
+            try {
+                const data = localStorage.getItem('studio_students_data');
+                if (data) {
+                    students = JSON.parse(data);
+                    populateGradeClassFilters();
+                    if (students.length > 0) selectStudent(students[0].id);
+                    renderRoster();
+                }
+            } catch(e) {}
+        }
+
+        /* ================= DIALOGS & TOAST HELPERS ================= */
+        function showConfirmModal(title, msg, callback) {
+            document.getElementById('confirm-modal-title').innerText = title;
+            document.getElementById('confirm-modal-msg').innerText = msg;
+            confirmCallback = callback;
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+
+        function closeConfirmModal(confirmed) {
+            document.getElementById('confirm-modal').classList.add('hidden');
+            if (confirmed && confirmCallback) {
+                confirmCallback();
+            }
+            confirmCallback = null;
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let bg = 'bg-slate-800 border-slate-700 text-slate-100';
+            let icon = 'fa-circle-info text-indigo-400';
+            if (type === 'success') { bg = 'bg-slate-800 border-emerald-500/50 text-emerald-200'; icon = 'fa-circle-check text-emerald-400'; }
+            if (type === 'error') { bg = 'bg-slate-800 border-rose-500/50 text-rose-200'; icon = 'fa-circle-exclamation text-rose-400'; }
+
+            toast.className = `p-3 rounded-xl border shadow-xl text-xs flex items-center gap-2.5 transition-all duration-300 transform translate-y-2 opacity-0 pointer-events-auto ${bg}`;
+            toast.innerHTML = `<i class="fa-solid ${icon} text-sm"></i><span>${message}</span>`;
+
+            container.appendChild(toast);
+            setTimeout(() => toast.classList.remove('translate-y-2', 'opacity-0'), 10);
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
