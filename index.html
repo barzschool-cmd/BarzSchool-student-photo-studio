@@ -42,16 +42,21 @@
     import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'eduphoto-app';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' 
-      ? JSON.parse(__firebase_config) 
-      : { apiKey: "demo", authDomain: "demo.firebaseapp.com", projectId: "demo" };
+    const rawConfig = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
 
     let db = null;
     let auth = null;
     let isCloudReady = false;
 
     async function initCloudSync() {
+      if (!rawConfig) {
+        console.info("Running in local persistent storage mode.");
+        return;
+      }
       try {
+        const firebaseConfig = JSON.parse(rawConfig);
+        if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "demo") return;
+
         const app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
@@ -80,11 +85,11 @@
             }
           }
         }, (err) => {
-          console.warn("Cloud sync snapshot error:", err);
+          console.warn("Cloud sync snapshot notice:", err);
         });
 
       } catch (err) {
-        console.warn("Cloud sync falling back to local persistent storage:", err);
+        console.warn("Cloud sync using local persistent storage fallback:", err);
       }
     }
 
@@ -588,9 +593,9 @@
           <div>
             <label class="block font-semibold text-slate-300 mb-1">Curriculum Language</label>
             <select id="manual-student-language" class="w-full py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-brand-500">
-              <option value="Kurdish (سۆرانی)">Kurdish Sorani (کوردی)</option>
+              <option value="Kurdish">Kurdish</option>
               <option value="English">English</option>
-              <option value="Arabic">Arabic (عربي)</option>
+              <option value="Arabic">Arabic</option>
               <option value="French">French</option>
               <option value="Spanish">Spanish</option>
             </select>
@@ -687,11 +692,11 @@
 
   <script>
     const DEFAULT_STUDENTS = [
-      { id: "STD101", code: "S1001", name: "ڕێبین ئەحمەد", grade: "پۆلی 10", classSection: "10-A", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD102", code: "S1002", name: "شێنێ بڕوا", grade: "پۆلی 10", classSection: "10-B", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD101", code: "S1001", name: "ڕێبین ئەحمەد", grade: "پۆلی 10", classSection: "10-A", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD102", code: "S1002", name: "شێنێ بڕوا", grade: "پۆلی 10", classSection: "10-B", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
       { id: "STD103", code: "S1003", name: "Alexander Wright", grade: "Grade 11", classSection: "11-A", language: "English", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD104", code: "S1004", name: "ئالان پشتیوان", grade: "پۆلی 11", classSection: "11-C", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD105", code: "S1005", name: "ژینۆ هۆشیار", grade: "پۆلی 9", classSection: "9-A", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null }
+      { id: "STD104", code: "S1004", name: "ئالان پشتیوان", grade: "پۆلی 11", classSection: "11-C", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD105", code: "S1005", name: "ژینۆ هۆشیار", grade: "پۆلی 9", classSection: "9-A", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null }
     ];
 
     const DEFAULT_ADMIN = { id: "usr_admin", name: "System Admin", email: "admin@school.edu", role: "Admin" };
@@ -714,8 +719,8 @@
         const stored = localStorage.getItem('eduphoto_state');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (parsed.students && parsed.students.length > 0) state.students = parsed.students;
-          if (parsed.users && parsed.users.length > 0) state.users = parsed.users;
+          if (parsed.students && Array.isArray(parsed.students) && parsed.students.length > 0) state.students = parsed.students;
+          if (parsed.users && Array.isArray(parsed.users) && parsed.users.length > 0) state.users = parsed.users;
           if (parsed.settings) state.settings = parsed.settings;
         }
       } catch (e) {
@@ -745,8 +750,6 @@
 
     function sanitizeFilenamePart(str) {
       if (!str) return '';
-      // Retain all Unicode scripts (Kurdish Sorani, Arabic, English, Numbers)
-      // Strip only OS-forbidden characters (\ / : * ? " < > |) and control chars
       return String(str)
         .trim()
         .replace(/[\\/:*?"<>|\r\n\t\0]/g, '')
@@ -802,9 +805,9 @@
     }
 
     function renderFilters() {
-      const grades = ['ALL', ...new Set(state.students.map(s => s.grade))];
-      const classes = ['ALL', ...new Set(state.students.map(s => s.classSection))];
-      const languages = ['ALL', ...new Set(state.students.map(s => s.language))];
+      const grades = ['ALL', ...new Set(state.students.map(s => s.grade || '').filter(Boolean))];
+      const classes = ['ALL', ...new Set(state.students.map(s => s.classSection || '').filter(Boolean))];
+      const languages = ['ALL', ...new Set(state.students.map(s => s.language || '').filter(Boolean))];
 
       populateDropdown('filter-grade', grades, 'All Grades');
       populateDropdown('filter-class', classes, 'All Classes');
@@ -831,8 +834,11 @@
       if (!tbody) return;
 
       let filtered = state.students.filter(s => {
-        const search = state.filters.search.toLowerCase();
-        const matchesSearch = !search || s.name.toLowerCase().includes(search) || s.code.toLowerCase().includes(search);
+        const search = (state.filters.search || '').toLowerCase();
+        const sName = (s.name || '').toLowerCase();
+        const sCode = (s.code || '').toLowerCase();
+        
+        const matchesSearch = !search || sName.includes(search) || sCode.includes(search);
         const matchesGrade = state.filters.grade === 'ALL' || s.grade === state.filters.grade;
         const matchesClass = state.filters.classSection === 'ALL' || s.classSection === state.filters.classSection;
         const matchesLang = state.filters.language === 'ALL' || s.language === state.filters.language;
@@ -868,11 +874,11 @@
         return `
           <tr onclick="selectStudentRow('${s.id}')" class="cursor-pointer transition hover:bg-slate-800/80 ${isSelected ? 'bg-brand-900/30 border-l-4 border-l-brand-500' : ''}">
             <td class="py-2.5 px-4">${avatarHtml}</td>
-            <td class="py-2.5 px-4 font-mono text-brand-400 font-semibold">${s.code}</td>
-            <td class="py-2.5 px-4 font-medium text-slate-100" dir="auto">${s.name}</td>
-            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.grade}</td>
-            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.classSection}</td>
-            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.language}</td>
+            <td class="py-2.5 px-4 font-mono text-brand-400 font-semibold">${s.code || ''}</td>
+            <td class="py-2.5 px-4 font-medium text-slate-100" dir="auto">${s.name || ''}</td>
+            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.grade || ''}</td>
+            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.classSection || ''}</td>
+            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.language || ''}</td>
             <td class="py-2.5 px-4">${statusBadge}</td>
             <td class="py-2.5 px-4 text-right">
               <button class="px-2.5 py-1 rounded-lg ${isSelected ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-300'} text-[11px] font-semibold">
@@ -889,10 +895,10 @@
       const student = state.students.find(s => s.id === id);
       if (!student) return;
 
-      document.getElementById('active-student-name').textContent = student.name;
-      document.getElementById('active-student-code').textContent = `Code: ${student.code}`;
-      document.getElementById('active-student-grade').textContent = `Grade: ${student.grade}`;
-      document.getElementById('active-student-status').textContent = student.status;
+      document.getElementById('active-student-name').textContent = student.name || 'Student';
+      document.getElementById('active-student-code').textContent = `Code: ${student.code || '---'}`;
+      document.getElementById('active-student-grade').textContent = `Grade: ${student.grade || '---'}`;
+      document.getElementById('active-student-status').textContent = student.status || 'Pending';
       
       const snapBtn = document.getElementById('btn-snap-photo');
       if (snapBtn) snapBtn.disabled = false;
@@ -942,7 +948,7 @@
         name: nameInput,
         grade: gradeInput || "Grade 10",
         classSection: classInput || "10-A",
-        language: langInput || "English",
+        language: langInput || "Kurdish",
         status: "Pending",
         photoFilename: "",
         photoData: null
@@ -1012,7 +1018,6 @@
 
         if (initialStream) {
           initialStream.getTracks().forEach(track => track.stop());
-          // Wait 300ms for OS camera driver to release hardware lock
           await new Promise(r => setTimeout(r, 300));
         }
 
@@ -1037,7 +1042,6 @@
       if (state.videoStream) {
         state.videoStream.getTracks().forEach(track => track.stop());
         state.videoStream = null;
-        // Delay to allow OS camera driver to release hardware lock
         await new Promise(r => setTimeout(r, 200));
       }
 
@@ -1062,7 +1066,6 @@
       } catch (err) {
         console.warn('Camera stream request failed:', err);
         if (retries > 0) {
-          // Pause briefly and retry without strict constraints or device ID
           await new Promise(r => setTimeout(r, 400));
           return startCameraStream(retries === 1 ? null : deviceId, retries - 1);
         }
@@ -1176,12 +1179,12 @@
       const exportData = data.map(s => {
         const photoName = s.photoFilename || (s.photoData ? generateStudentPhotoFilename(s, state.settings.format) : "");
         return {
-          "Student Code": s.code,
-          "Full Name": s.name,
-          "Grade": s.grade,
-          "Class": s.classSection,
-          "Language": s.language,
-          "Photo Status": s.status,
+          "Student Code": s.code || "",
+          "Full Name": s.name || "",
+          "Grade": s.grade || "",
+          "Class": s.classSection || "",
+          "Language": s.language || "",
+          "Photo Status": s.status || "Pending",
           "Photo Filename": photoName
         };
       });
@@ -1231,12 +1234,12 @@
       const exportData = state.students.map(s => {
         const photoName = s.photoFilename || (s.photoData ? generateStudentPhotoFilename(s, state.settings.format) : "N/A");
         return {
-          "Student Code": s.code,
-          "Full Name": s.name,
-          "Grade": s.grade,
-          "Class": s.classSection,
-          "Language": s.language,
-          "Photo Status": s.status,
+          "Student Code": s.code || "",
+          "Full Name": s.name || "",
+          "Grade": s.grade || "",
+          "Class": s.classSection || "",
+          "Language": s.language || "",
+          "Photo Status": s.status || "Pending",
           "Photo Filename": photoName
         };
       });
@@ -1279,7 +1282,7 @@
               name: String(row["Full Name"] || row["Name"] || row["Student Name"] || `Student ${idx + 1}`),
               grade: String(row["Grade"] || "Grade 10"),
               classSection: String(row["Class"] || row["Class Section"] || "10-A"),
-              language: String(row["Language"] || row["Curriculum Language"] || "English"),
+              language: String(row["Language"] || row["Curriculum Language"] || "Kurdish"),
               status: String(row["Photo Status"] || "Pending"),
               photoFilename: String(row["Photo Filename"] || ""),
               photoData: null
