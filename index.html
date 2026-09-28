@@ -99,10 +99,16 @@
         db = getFirestore(app);
         auth = getAuth(app);
 
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+        // Attempt authentication with fallback
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (authErr) {
+          console.warn("Anonymous auth skipped/disabled in console:", authErr.message);
+          // Continue anyway as Firestore might allow public reads/writes in Test Mode
         }
 
         isCloudReady = true;
@@ -126,6 +132,9 @@
           }
         }, (err) => {
           console.warn("Cloud sync snapshot notice:", err);
+          if (err.code === 'permission-denied') {
+            showToast("Firebase Rules Blocked Connection: Set Firestore Security Rules to Test Mode (allow read, write: if true;)", "error");
+          }
         });
 
         showToast("Cloud Database Connected Live!", "success");
@@ -133,22 +142,33 @@
       } catch (err) {
         console.warn("Cloud sync connection error:", err);
         if (cloudBadge) cloudBadge.classList.add('hidden');
-        showToast("Could not connect to Firebase: " + err.message, "warning");
+        
+        let errMsg = err.message;
+        if (err.code === 'permission-denied') {
+          errMsg = "Firestore Security Rules are blocking access. Go to Firebase Console > Firestore > Rules and set: allow read, write: if true;";
+        } else if (err.message?.includes("invalid-api-key")) {
+          errMsg = "Invalid API Key. Please verify your Firebase Config in Settings.";
+        }
+        
+        showToast("Could not connect to Firebase: " + errMsg, "error");
       }
     }
 
     window.saveStudentToCloud = async function(student) {
-      if (!isCloudReady || !db || !auth?.currentUser) return;
+      if (!isCloudReady || !db) return;
       try {
         const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id);
         await setDoc(studentDocRef, student, { merge: true });
       } catch (err) {
         console.error("Cloud save failed for student:", err);
+        if (err.code === 'permission-denied') {
+          showToast("Cloud save blocked by Firebase Security Rules. Check Firebase Rules in Settings.", "warning");
+        }
       }
     };
 
     window.saveAllStudentsToCloud = async function(students) {
-      if (!isCloudReady || !db || !auth?.currentUser) return;
+      if (!isCloudReady || !db) return;
       try {
         for (const s of students) {
           const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', s.id);
@@ -573,9 +593,24 @@
               <label class="block font-semibold text-slate-300 mb-1">Firebase Credentials JSON</label>
               <textarea id="setting-firebase-json" rows="3" placeholder='{"apiKey": "AIzaSy...", "authDomain": "...", "projectId": "...", "storageBucket": "..."}' class="w-full p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 font-mono text-[10px] focus:outline-none focus:border-brand-500"></textarea>
             </div>
+
+            <!-- Firebase Setup Requirements Helper Box -->
+            <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-800/80 text-[11px] text-slate-300 space-y-1.5">
+              <div class="font-bold text-amber-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-triangle-exclamation"></i> Required Firebase Console Setup Checklist:
+              </div>
+              <ol class="list-decimal list-inside space-y-1 text-slate-400 text-[10px]">
+                <li><strong class="text-slate-200">Cloud Firestore:</strong> Go to Firebase Console &gt; <em>Build</em> &gt; <em>Firestore Database</em> &gt; Click <strong>Create Database</strong>.</li>
+                <li><strong class="text-slate-200">Database Rules:</strong> In Firestore &gt; <em>Rules</em> tab, set:<br>
+                  <code class="text-emerald-400 bg-slate-950 px-1 py-0.5 rounded font-mono">allow read, write: if true;</code>
+                </li>
+                <li><strong class="text-slate-200">Anonymous Auth:</strong> In <em>Authentication</em> &gt; <em>Sign-in method</em> &gt; Enable <strong>Anonymous</strong>.</li>
+              </ol>
+            </div>
+
             <div class="flex justify-between items-center pt-1">
               <a href="https://console.firebase.google.com/" target="_blank" class="text-brand-400 hover:underline text-[11px] flex items-center gap-1">
-                <i class="fa-solid fa-arrow-up-right-from-square"></i> Get Free Firebase Console Project
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> Firebase Console
               </a>
               <button type="button" id="btn-apply-firebase-config" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white font-semibold rounded-lg transition text-[11px]">
                 Save & Connect Cloud
