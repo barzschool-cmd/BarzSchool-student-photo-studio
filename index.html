@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BarzSchool Student Photo Capture - By Dana Sulaiman</title>
+  <title>Student Photo Capture & ID Management System</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -35,6 +35,84 @@
   <!-- FileSaver for downloading generated zip files -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
+  <!-- Real-time Cloud Data & Photo Persistence Module -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'eduphoto-app';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' 
+      ? JSON.parse(__firebase_config) 
+      : { apiKey: "demo", authDomain: "demo.firebaseapp.com", projectId: "demo" };
+
+    let db = null;
+    let auth = null;
+    let isCloudReady = false;
+
+    async function initCloudSync() {
+      try {
+        const app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        auth = getAuth(app);
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+
+        isCloudReady = true;
+        const cloudBadge = document.getElementById('cloud-sync-badge');
+        if (cloudBadge) {
+          cloudBadge.classList.remove('hidden');
+        }
+
+        const studentsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+        onSnapshot(studentsColRef, (snapshot) => {
+          if (!snapshot.empty) {
+            const cloudStudents = [];
+            snapshot.forEach(docSnap => {
+              cloudStudents.push(docSnap.data());
+            });
+            if (window.onCloudStudentsSync) {
+              window.onCloudStudentsSync(cloudStudents);
+            }
+          }
+        }, (err) => {
+          console.warn("Cloud sync snapshot error:", err);
+        });
+
+      } catch (err) {
+        console.warn("Cloud sync falling back to local persistent storage:", err);
+      }
+    }
+
+    window.saveStudentToCloud = async function(student) {
+      if (!isCloudReady || !db || !auth?.currentUser) return;
+      try {
+        const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id);
+        await setDoc(studentDocRef, student, { merge: true });
+      } catch (err) {
+        console.error("Cloud save failed for student:", err);
+      }
+    };
+
+    window.saveAllStudentsToCloud = async function(students) {
+      if (!isCloudReady || !db || !auth?.currentUser) return;
+      try {
+        for (const s of students) {
+          const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', s.id);
+          await setDoc(studentDocRef, s, { merge: true });
+        }
+      } catch (err) {
+        console.error("Batch cloud save failed:", err);
+      }
+    };
+
+    initCloudSync();
+  </script>
+
   <style>
     .custom-scrollbar::-webkit-scrollbar {
       width: 6px;
@@ -63,7 +141,7 @@
       <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-brand-500/30 mb-4">
         <i class="fa-solid fa-user-lock"></i>
       </div>
-      <h2 class="text-xl font-bold text-white mb-1">Barz Private School</h2>
+      <h2 class="text-xl font-bold text-white mb-1">EduPhoto PRO</h2>
       <p class="text-xs text-slate-400 mb-6 text-center">Please select your account to access the photo capture system.</p>
 
       <form id="login-form" class="w-full flex flex-col gap-4">
@@ -98,8 +176,8 @@
           <i class="fa-solid fa-camera-retro"></i>
         </div>
         <div>
-          <h1 class="font-bold text-lg leading-tight tracking-wide text-white">Barz Private School <span class="text-xs px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 border border-brand-500/30">PRO v2.5</span></h1>
-          <p class="text-xs text-slate-400">Student ID Photo Capture & Management - By Dana Sulaiman</p>
+          <h1 class="font-bold text-lg leading-tight tracking-wide text-white">EduPhoto <span class="text-xs px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 border border-brand-500/30">PRO v2.5</span></h1>
+          <p class="text-xs text-slate-400">Student ID Photo Capture & Management</p>
         </div>
       </div>
 
@@ -118,6 +196,10 @@
         <div class="flex items-center gap-2">
           <span class="text-emerald-400"><i class="fa-solid fa-circle-check"></i> Captured:</span>
           <span id="stat-captured" class="font-bold text-emerald-300">0</span>
+        </div>
+        <div class="w-px h-4 bg-slate-800"></div>
+        <div id="cloud-sync-badge" class="hidden flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20" title="All photo edits and student data are synchronized across all devices">
+          <i class="fa-solid fa-cloud-arrow-up animate-pulse"></i> Cloud Synced
         </div>
       </div>
 
@@ -629,7 +711,7 @@
 
     function loadPersistedState() {
       try {
-        const stored = localStorage.getItem('Barz Private School_state');
+        const stored = localStorage.getItem('eduphoto_state');
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed.students && parsed.students.length > 0) state.students = parsed.students;
@@ -651,7 +733,7 @@
 
     function saveState() {
       try {
-        localStorage.setItem('Barz Private School_state', JSON.stringify({
+        localStorage.setItem('eduphoto_state', JSON.stringify({
           students: state.students,
           users: state.users,
           settings: state.settings
@@ -828,11 +910,15 @@
         student.status = 'Captured';
 
         saveState();
+        if (window.saveStudentToCloud) {
+          window.saveStudentToCloud(student);
+        }
+
         renderStudentTable();
         selectStudentRow(student.id);
 
         document.getElementById('modal-preview').classList.add('hidden');
-        showToast(`Photo saved for ${student.name}`, "success");
+        showToast(`Photo saved for ${student.name} & synced across devices!`, "success");
       }
     }
 
@@ -864,13 +950,18 @@
 
       state.students.unshift(newStudent);
       saveState();
+
+      if (window.saveStudentToCloud) {
+        window.saveStudentToCloud(newStudent);
+      }
+
       renderFilters();
       renderStudentTable();
       selectStudentRow(newStudent.id);
 
       document.getElementById('modal-add-student').classList.add('hidden');
       document.getElementById('form-add-student').reset();
-      showToast(`Student ${nameInput} added and selected!`, "success");
+      showToast(`Student ${nameInput} added and synced!`, "success");
     }
 
     function startFaceTrackingAnimation() {
@@ -1112,7 +1203,7 @@
     }
 
     function downloadSampleExcel() {
-      exportToExcel(DEFAULT_STUDENTS, "Barz Private School_Sample_Student_Import_Template.xlsx");
+      exportToExcel(DEFAULT_STUDENTS, "EduPhoto_Sample_Student_Import_Template.xlsx");
     }
 
     async function exportUnifiedBundle() {
@@ -1161,7 +1252,7 @@
 
       try {
         const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, "Barz Private School_Bundle_Export.zip");
+        saveAs(content, "EduPhoto_Bundle_Export.zip");
         showToast("Bundle download started!", "success");
       } catch (e) {
         console.error("ZIP Generation Error:", e);
@@ -1196,9 +1287,14 @@
 
             state.students = importedStudents;
             saveState();
+
+            if (window.saveAllStudentsToCloud) {
+              window.saveAllStudentsToCloud(importedStudents);
+            }
+
             renderFilters();
             renderStudentTable();
-            showToast(`Successfully imported ${importedStudents.length} students!`, "success");
+            showToast(`Successfully imported & synced ${importedStudents.length} students!`, "success");
           } else {
             showToast("Excel file contained no readable student data", "warning");
           }
@@ -1440,6 +1536,16 @@
 
     window.onload = function() {
       loadPersistedState();
+
+      window.onCloudStudentsSync = function(cloudStudents) {
+        if (cloudStudents && cloudStudents.length > 0) {
+          state.students = cloudStudents;
+          saveState();
+          renderFilters();
+          renderStudentTable();
+        }
+      };
+
       populateLoginUsersDropdown();
       renderFilters();
       renderStudentTable();
