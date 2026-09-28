@@ -37,25 +37,63 @@
 
   <!-- Real-time Cloud Data & Photo Persistence Module -->
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { initializeApp, getApps, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'eduphoto-app';
-    const rawConfig = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
-
     let db = null;
     let auth = null;
     let isCloudReady = false;
+    let syncUnsubscribe = null;
 
-    async function initCloudSync() {
-      if (!rawConfig) {
-        console.info("Running in local persistent storage mode.");
+    window.getFirebaseConfig = function() {
+      try {
+        const stored = localStorage.getItem('eduphoto_firebase_config');
+        if (stored) return JSON.parse(stored);
+      } catch (e) {
+        console.warn("Error reading stored firebase config:", e);
+      }
+      if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+        try {
+          return JSON.parse(__firebase_config);
+        } catch (e) {}
+      }
+      return null;
+    };
+
+    window.saveFirebaseConfig = async function(configObj) {
+      if (!configObj || !configObj.apiKey) {
+        localStorage.removeItem('eduphoto_firebase_config');
+        showToast("Cloud configuration cleared. Running in local mode.", "info");
+        location.reload();
         return;
       }
       try {
-        const firebaseConfig = JSON.parse(rawConfig);
-        if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "demo") return;
+        localStorage.setItem('eduphoto_firebase_config', JSON.stringify(configObj));
+        showToast("Firebase credentials saved! Connecting to cloud...", "success");
+        await initCloudSync();
+      } catch (e) {
+        showToast("Failed to save cloud config: " + e.message, "error");
+      }
+    };
+
+    async function initCloudSync() {
+      const firebaseConfig = window.getFirebaseConfig();
+      const cloudBadge = document.getElementById('cloud-sync-badge');
+
+      if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey === "demo") {
+        console.info("Running in local storage mode (no cloud config).");
+        if (cloudBadge) {
+          cloudBadge.classList.add('hidden');
+        }
+        return;
+      }
+
+      try {
+        if (getApps().length > 0) {
+          await Promise.all(getApps().map(a => deleteApp(a)));
+        }
 
         const app = initializeApp(firebaseConfig);
         db = getFirestore(app);
@@ -68,13 +106,15 @@
         }
 
         isCloudReady = true;
-        const cloudBadge = document.getElementById('cloud-sync-badge');
         if (cloudBadge) {
           cloudBadge.classList.remove('hidden');
+          cloudBadge.title = "Connected live to Firestore cloud database (" + (firebaseConfig.projectId || 'Firebase') + ")";
         }
 
+        if (syncUnsubscribe) syncUnsubscribe();
+
         const studentsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
-        onSnapshot(studentsColRef, (snapshot) => {
+        syncUnsubscribe = onSnapshot(studentsColRef, (snapshot) => {
           if (!snapshot.empty) {
             const cloudStudents = [];
             snapshot.forEach(docSnap => {
@@ -88,8 +128,12 @@
           console.warn("Cloud sync snapshot notice:", err);
         });
 
+        showToast("Cloud Database Connected Live!", "success");
+
       } catch (err) {
-        console.warn("Cloud sync using local persistent storage fallback:", err);
+        console.warn("Cloud sync connection error:", err);
+        if (cloudBadge) cloudBadge.classList.add('hidden');
+        showToast("Could not connect to Firebase: " + err.message, "warning");
       }
     }
 
@@ -115,6 +159,7 @@
       }
     };
 
+    window.initCloudSyncModule = initCloudSync;
     initCloudSync();
   </script>
 
@@ -203,8 +248,8 @@
           <span id="stat-captured" class="font-bold text-emerald-300">0</span>
         </div>
         <div class="w-px h-4 bg-slate-800"></div>
-        <div id="cloud-sync-badge" class="hidden flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20" title="All photo edits and student data are synchronized across all devices">
-          <i class="fa-solid fa-cloud-arrow-up animate-pulse"></i> Cloud Synced
+        <div id="cloud-sync-badge" class="hidden flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 cursor-pointer" onclick="document.getElementById('btn-show-settings').click()" title="Cloud database active. Click to view configuration.">
+          <i class="fa-solid fa-cloud-arrow-up animate-pulse"></i> Multi-Laptop Cloud Synced
         </div>
       </div>
 
@@ -213,7 +258,7 @@
         <span id="user-role-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
           <i class="fa-solid fa-user-shield"></i> <span id="current-user-role">Admin</span>
         </span>
-        <button id="btn-show-settings" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition" title="Settings">
+        <button id="btn-show-settings" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition relative" title="Settings & Cloud Sync Setup">
           <i class="fa-solid fa-sliders"></i>
         </button>
         <button id="btn-show-guide" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition" title="GitHub & Deployment Guide">
@@ -228,10 +273,23 @@
       </div>
     </header>
 
+    <!-- MOBILE TOP VIEW TAB CONTROLLER -->
+    <div class="flex md:hidden bg-slate-900 border-b border-slate-800 text-xs font-semibold">
+      <button id="tab-studio" onclick="switchMobileTab('studio')" class="flex-1 py-2.5 text-center text-brand-400 border-b-2 border-brand-500">
+        <i class="fa-solid fa-camera"></i> Studio
+      </button>
+      <button id="tab-roster" onclick="switchMobileTab('roster')" class="flex-1 py-2.5 text-center text-slate-400 border-b-2 border-transparent">
+        <i class="fa-solid fa-list-check"></i> Roster
+      </button>
+      <button id="tab-actions" onclick="switchMobileTab('actions')" class="flex-1 py-2.5 text-center text-slate-400 border-b-2 border-transparent">
+        <i class="fa-solid fa-bolt"></i> Actions
+      </button>
+    </div>
+
     <!-- MAIN CONTENT AREA -->
-    <main class="flex-1 flex overflow-hidden">
+    <main class="flex-1 flex overflow-hidden flex-col md:flex-row">
       <!-- LEFT SIDEBAR: Action & Export Controls -->
-      <aside class="w-64 bg-slate-900/90 border-r border-slate-800 flex flex-col shrink-0 p-4 gap-3">
+      <aside id="panel-sidebar" class="w-full md:w-64 bg-slate-900/90 border-r border-slate-800 flex flex-col shrink-0 p-4 gap-3 overflow-y-auto custom-scrollbar">
         <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
           <i class="fa-solid fa-box-archive text-brand-400"></i> Actions & Data
         </h2>
@@ -270,7 +328,7 @@
       </aside>
 
       <!-- CENTER: STUDENT TABLE LIST WITH TOP FILTERS PANEL -->
-      <section class="flex-1 flex flex-col bg-slate-950 min-w-0">
+      <section id="panel-roster" class="flex-1 flex flex-col bg-slate-950 min-w-0 overflow-hidden">
         
         <!-- TOP FILTERS TOOLBAR (POSITIONED DIRECTLY ABOVE STUDENT TABLE) -->
         <div class="p-4 bg-slate-900 border-b border-slate-800">
@@ -288,7 +346,7 @@
             <div class="lg:col-span-1">
               <div class="relative">
                 <i class="fa-solid fa-search absolute left-3 top-2.5 text-xs text-slate-500"></i>
-                <input type="text" id="filter-search" placeholder="Search name or code..." class="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-brand-500">
+                <input type="text" id="filter-search" dir="auto" placeholder="Search name or code..." class="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-brand-500">
               </div>
             </div>
 
@@ -335,7 +393,7 @@
         </div>
 
         <!-- Student Data Table Container -->
-        <div class="flex-1 overflow-auto custom-scrollbar p-6">
+        <div class="flex-1 overflow-auto custom-scrollbar p-3 sm:p-6">
           <div class="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
             <table class="w-full text-left text-xs text-slate-300">
               <thead class="bg-slate-800/60 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-800">
@@ -376,7 +434,7 @@
       </section>
 
       <!-- RIGHT: LIVE CAMERA STUDIO & CAPTURE WORKFLOW -->
-      <section id="camera-studio" class="w-96 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0">
+      <section id="panel-studio" class="w-full md:w-96 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 overflow-y-auto custom-scrollbar">
         <!-- Studio Header -->
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
           <h2 class="font-semibold text-sm text-slate-200 flex items-center gap-2">
@@ -392,10 +450,10 @@
           <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Selected Student</div>
           <div id="active-student-card" class="bg-slate-900 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
             <div>
-              <div id="active-student-name" class="font-semibold text-sm text-white">Select a student</div>
+              <div id="active-student-name" dir="auto" class="font-semibold text-sm text-white">Select a student</div>
               <div class="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
                 <span id="active-student-code">Code: ---</span> | 
-                <span id="active-student-grade">Grade: ---</span>
+                <span id="active-student-grade" dir="auto">Grade: ---</span>
               </div>
             </div>
             <span id="active-student-status" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">None</span>
@@ -408,8 +466,8 @@
         </div>
 
         <!-- Live Camera Stream Container -->
-        <div class="p-4 flex-1 min-h-0 flex flex-col items-center justify-center relative bg-slate-950 overflow-hidden">
-          <div class="relative w-full max-h-full camera-frame bg-slate-900 rounded-2xl overflow-hidden border-2 border-slate-800 shadow-2xl flex items-center justify-center">
+        <div class="p-4 flex-1 min-h-[300px] flex flex-col items-center justify-center relative bg-slate-950 overflow-hidden">
+          <div class="relative w-full max-w-[280px] sm:max-w-none camera-frame bg-slate-900 rounded-2xl overflow-hidden border-2 border-slate-800 shadow-2xl flex items-center justify-center">
             <!-- Video Element -->
             <video id="webcam-video" autoplay playsinline class="w-full h-full object-cover transform -scale-x-100"></video>
             
@@ -469,9 +527,9 @@
             <img id="preview-image" src="" alt="Cropped Preview" class="w-full h-full object-cover">
           </div>
           <div class="text-center">
-            <h4 id="preview-student-name" class="font-bold text-slate-100 text-base">Student Name</h4>
+            <h4 id="preview-student-name" dir="auto" class="font-bold text-slate-100 text-base">Student Name</h4>
             <p id="preview-student-code" class="text-xs text-brand-400 font-mono mt-0.5">CODE: 000000</p>
-            <p id="preview-filename-info" class="text-[11px] text-slate-500 mt-2 font-mono">Filename: std_photo.jpg</p>
+            <p id="preview-filename-info" class="text-[11px] text-slate-500 mt-2 font-mono" dir="auto">Filename: std_photo.jpg</p>
           </div>
         </div>
 
@@ -489,17 +547,42 @@
       </div>
     </div>
 
-    <!-- MODAL 2: SETTINGS PANEL -->
+    <!-- MODAL 2: SETTINGS & CLOUD SYNC PANEL -->
     <div id="modal-settings" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
           <h3 class="font-bold text-slate-200 flex items-center gap-2 text-sm">
-            <i class="fa-solid fa-sliders text-brand-400"></i> Capture & Export Settings
+            <i class="fa-solid fa-sliders text-brand-400"></i> Settings & Multi-Laptop Cloud Sync
           </h3>
           <button id="btn-close-settings" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
         </div>
 
-        <div class="p-5 flex flex-col gap-4 text-xs">
+        <div class="p-5 flex flex-col gap-4 text-xs overflow-y-auto custom-scrollbar">
+          <!-- MULTI-LAPTOP CLOUD SYNC SETTINGS SECTION -->
+          <div class="bg-slate-950 p-4 rounded-2xl border border-brand-500/30 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 class="font-bold text-slate-100 flex items-center gap-2 text-xs">
+                <i class="fa-solid fa-cloud-arrow-up text-emerald-400"></i> Real-time Firebase Cloud Database Sync
+              </h4>
+              <span id="settings-cloud-status" class="text-[10px] px-2 py-0.5 rounded font-semibold bg-slate-800 text-slate-400">Disconnected</span>
+            </div>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+              To sync all student roster changes, edits, and photos live across <strong>multiple laptops or users on GitHub Pages</strong>, paste your Firebase web config JSON below:
+            </p>
+            <div>
+              <label class="block font-semibold text-slate-300 mb-1">Firebase Credentials JSON</label>
+              <textarea id="setting-firebase-json" rows="3" placeholder='{"apiKey": "AIzaSy...", "authDomain": "...", "projectId": "...", "storageBucket": "..."}' class="w-full p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 font-mono text-[10px] focus:outline-none focus:border-brand-500"></textarea>
+            </div>
+            <div class="flex justify-between items-center pt-1">
+              <a href="https://console.firebase.google.com/" target="_blank" class="text-brand-400 hover:underline text-[11px] flex items-center gap-1">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> Get Free Firebase Console Project
+              </a>
+              <button type="button" id="btn-apply-firebase-config" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white font-semibold rounded-lg transition text-[11px]">
+                Save & Connect Cloud
+              </button>
+            </div>
+          </div>
+
           <!-- Image Format -->
           <div>
             <label class="block font-semibold text-slate-300 mb-1">Image Format</label>
@@ -529,15 +612,6 @@
               <option value="800x1000">800 x 1000 px (Medium ID Quality)</option>
               <option value="400x500">400 x 500 px (Compact Web ID)</option>
             </select>
-          </div>
-
-          <!-- Auto Center Toggle -->
-          <div class="flex items-center justify-between py-2 border-t border-slate-800">
-            <div>
-              <div class="font-semibold text-slate-300">Auto Face Detection & Centering</div>
-              <div class="text-[11px] text-slate-500">Automatically centers student face during 4x5 crop</div>
-            </div>
-            <input type="checkbox" id="setting-autocenter" checked class="w-4 h-4 accent-brand-500 rounded">
           </div>
 
           <!-- Flip Captured Photo Toggle -->
@@ -659,7 +733,7 @@
       <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col">
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
           <h3 class="font-bold text-slate-200 flex items-center gap-2 text-sm">
-            <i class="fa-solid fa-book-open text-brand-400"></i> GitHub & Hosting Deployment Guide
+            <i class="fa-solid fa-book-open text-brand-400"></i> GitHub Hosting & Cloud Sync Setup Guide
           </h3>
           <button id="btn-close-guide" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
         </div>
@@ -679,8 +753,14 @@
           </div>
 
           <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2">
-            <h4 class="font-bold text-indigo-400 text-sm">2. Data Persistence & Real-time Sync</h4>
-            <p class="text-slate-400">The app runs automatically with internal persistent state storage. Changes are synchronized across sessions and survive page refreshes smoothly.</p>
+            <h4 class="font-bold text-emerald-400 text-sm">2. Enabling Multi-Laptop Real-time Cloud Sync</h4>
+            <p class="text-slate-400 leading-relaxed">By default, GitHub Pages hosts static files and saves edits to that single browser's <code class="text-slate-200">localStorage</code>. To sync data live across all laptops:</p>
+            <ol class="list-decimal list-inside space-y-1.5 text-slate-400">
+              <li>Open <a href="https://console.firebase.google.com/" target="_blank" class="text-brand-400 underline">Firebase Console</a> and click <strong>Add Project</strong>.</li>
+              <li>Create a free <strong>Firestore Database</strong> in test mode.</li>
+              <li>Go to <strong>Project Settings</strong> &rarr; <strong>Add Web App</strong>, and copy the Firebase config object.</li>
+              <li>Click the <i class="fa-solid fa-sliders text-brand-400"></i> Settings icon in this app, paste the JSON config into <strong>Real-time Firebase Cloud Sync</strong>, and click <strong>Save & Connect</strong>.</li>
+            </ol>
           </div>
         </div>
       </div>
@@ -904,6 +984,47 @@
       if (snapBtn) snapBtn.disabled = false;
 
       renderStudentTable();
+
+      if (window.innerWidth < 768) {
+        switchMobileTab('studio');
+      }
+    }
+
+    function switchMobileTab(tab) {
+      const panelStudio = document.getElementById('panel-studio');
+      const panelRoster = document.getElementById('panel-roster');
+      const panelSidebar = document.getElementById('panel-sidebar');
+
+      const tabStudio = document.getElementById('tab-studio');
+      const tabRoster = document.getElementById('tab-roster');
+      const tabActions = document.getElementById('tab-actions');
+
+      [tabStudio, tabRoster, tabActions].forEach(t => {
+        if (t) {
+          t.classList.remove('text-brand-400', 'border-brand-500');
+          t.classList.add('text-slate-400', 'border-transparent');
+        }
+      });
+
+      if (tab === 'studio') {
+        panelStudio?.classList.remove('hidden');
+        panelRoster?.classList.add('hidden');
+        panelSidebar?.classList.add('hidden');
+        tabStudio?.classList.add('text-brand-400', 'border-brand-500');
+        tabStudio?.classList.remove('text-slate-400', 'border-transparent');
+      } else if (tab === 'roster') {
+        panelStudio?.classList.add('hidden');
+        panelRoster?.classList.remove('hidden');
+        panelSidebar?.classList.add('hidden');
+        tabRoster?.classList.add('text-brand-400', 'border-brand-500');
+        tabRoster?.classList.remove('text-slate-400', 'border-transparent');
+      } else if (tab === 'actions') {
+        panelStudio?.classList.add('hidden');
+        panelRoster?.classList.add('hidden');
+        panelSidebar?.classList.remove('hidden');
+        tabActions?.classList.add('text-brand-400', 'border-brand-500');
+        tabActions?.classList.remove('text-slate-400', 'border-transparent');
+      }
     }
 
     function saveCapturedPhoto() {
@@ -1418,16 +1539,42 @@
       document.getElementById('btn-show-settings')?.addEventListener('click', () => {
         const flipSettingEl = document.getElementById('setting-flip-captured');
         if (flipSettingEl) flipSettingEl.checked = state.settings.flipCaptured !== false;
+        
+        const fbConfig = window.getFirebaseConfig();
+        const fbJsonArea = document.getElementById('setting-firebase-json');
+        const fbStatus = document.getElementById('settings-cloud-status');
+        if (fbConfig) {
+          if (fbJsonArea) fbJsonArea.value = JSON.stringify(fbConfig, null, 2);
+          if (fbStatus) {
+            fbStatus.textContent = "Cloud Active";
+            fbStatus.className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
+          }
+        }
         document.getElementById('modal-settings')?.classList.remove('hidden');
       });
+
+      document.getElementById('btn-apply-firebase-config')?.addEventListener('click', () => {
+        const jsonStr = document.getElementById('setting-firebase-json').value.trim();
+        if (!jsonStr) {
+          window.saveFirebaseConfig(null);
+          return;
+        }
+        try {
+          const configObj = JSON.parse(jsonStr);
+          window.saveFirebaseConfig(configObj);
+        } catch (e) {
+          showToast("Invalid JSON syntax. Please check your Firebase config object.", "error");
+        }
+      });
+
       document.getElementById('btn-close-settings')?.addEventListener('click', () => {
         document.getElementById('modal-settings')?.classList.add('hidden');
       });
+
       document.getElementById('btn-save-settings')?.addEventListener('click', () => {
         state.settings.format = document.getElementById('setting-format').value;
         state.settings.quality = parseFloat(document.getElementById('setting-quality').value);
         state.settings.resolution = document.getElementById('setting-resolution').value;
-        state.settings.autocenter = document.getElementById('setting-autocenter').checked;
         state.settings.flipCaptured = document.getElementById('setting-flip-captured').checked;
         saveState();
         document.getElementById('modal-settings')?.classList.add('hidden');
