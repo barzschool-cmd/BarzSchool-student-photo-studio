@@ -1560,10 +1560,29 @@
           return;
         }
         try {
-          const configObj = JSON.parse(jsonStr);
-          window.saveFirebaseConfig(configObj);
+          let configObj = null;
+          try {
+            configObj = JSON.parse(jsonStr);
+          } catch (err) {
+            // Smart auto-parse: Extract object and convert JS snippet syntax to valid JSON
+            const match = jsonStr.match(/\{[\s\S]*\}/);
+            if (match) {
+              let cleaned = match[0]
+                .replace(/\/\/.*/g, '')
+                .replace(/\/\*[\s\S]*?\*\//g, '')
+                .replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":')
+                .replace(/:\s*'([^']*)'/g, ':"$1"')
+                .replace(/,\s*([}\]])/g, '$1');
+              configObj = JSON.parse(cleaned);
+            }
+          }
+          if (configObj && configObj.apiKey) {
+            window.saveFirebaseConfig(configObj);
+          } else {
+            throw new Error("Missing apiKey in configuration object");
+          }
         } catch (e) {
-          showToast("Invalid JSON syntax. Please check your Firebase config object.", "error");
+          showToast("Invalid syntax. Please paste a valid JSON or Firebase config object.", "error");
         }
       });
 
