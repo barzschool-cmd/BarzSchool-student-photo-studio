@@ -149,6 +149,11 @@
           <i class="fa-solid fa-box-archive text-brand-400"></i> Actions & Data
         </h2>
 
+        <!-- MANUAL STUDENT ADD BUTTON -->
+        <button id="btn-open-add-student" class="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 transition">
+          <i class="fa-solid fa-user-plus"></i> Add Student Manually
+        </button>
+
         <button id="btn-import-excel" class="w-full py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-brand-600/20 transition">
           <i class="fa-solid fa-file-import"></i> Import Excel Data
         </button>
@@ -269,10 +274,15 @@
                 <i class="fa-solid fa-folder-open"></i>
               </div>
               <h3 class="text-slate-300 font-medium text-base mb-1">No Students Found</h3>
-              <p class="text-slate-500 text-xs max-w-sm mb-4">Import an Excel sheet or load our pre-populated sample dataset to start taking photos.</p>
-              <button id="btn-load-sample-direct" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-brand-600/20 transition flex items-center gap-2">
-                <i class="fa-solid fa-wand-magic-sparkles"></i> Load Sample Data Now
-              </button>
+              <p class="text-slate-500 text-xs max-w-sm mb-4">Add a student manually or import an Excel sheet to start taking photos.</p>
+              <div class="flex gap-2">
+                <button id="btn-empty-add-manual" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/20 transition flex items-center gap-2">
+                  <i class="fa-solid fa-user-plus"></i> Add Student
+                </button>
+                <button id="btn-load-sample-direct" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-brand-600/20 transition flex items-center gap-2">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i> Load Sample Data
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -347,6 +357,9 @@
           <select id="camera-select" class="flex-1 py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-brand-500">
             <option value="">Detecting cameras...</option>
           </select>
+          <button id="btn-retry-camera" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs" title="Retry / Reconnect Camera">
+            <i class="fa-solid fa-arrows-rotate"></i>
+          </button>
           <button id="btn-toggle-camera" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs" title="Toggle Mirror View">
             <i class="fa-solid fa-right-left"></i>
           </button>
@@ -458,7 +471,62 @@
       </div>
     </div>
 
-    <!-- MODAL 3: ADMIN & USER MANAGEMENT PANEL -->
+    <!-- MODAL 3: MANUAL STUDENT CREATION -->
+    <div id="modal-add-student" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col">
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+          <h3 class="font-bold text-slate-200 flex items-center gap-2 text-sm">
+            <i class="fa-solid fa-user-plus text-indigo-400"></i> Add Student Record
+          </h3>
+          <button id="btn-close-add-student" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <form id="form-add-student" class="p-5 flex flex-col gap-3.5 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">Student Code / ID <span class="text-slate-500 font-normal">(Optional, auto-generated if blank)</span></label>
+            <input type="text" id="manual-student-code" placeholder="e.g. S1006" class="w-full py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-brand-500">
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">Full Name <span class="text-rose-400">*</span></label>
+            <input type="text" id="manual-student-name" dir="auto" required placeholder="e.g. ڕێبین ئەحمەد" class="w-full py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-brand-500">
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-300 mb-1">Grade</label>
+              <input type="text" id="manual-student-grade" dir="auto" placeholder="e.g. پۆلی 10 / Grade 10" value="Grade 10" class="w-full py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-brand-500">
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-300 mb-1">Class / Section</label>
+              <input type="text" id="manual-student-class" dir="auto" placeholder="e.g. 10-A" value="10-A" class="w-full py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-brand-500">
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-300 mb-1">Curriculum Language</label>
+            <select id="manual-student-language" class="w-full py-2 px-3 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-brand-500">
+              <option value="Kurdish (سۆرانی)">Kurdish Sorani (کوردی)</option>
+              <option value="English">English</option>
+              <option value="Arabic">Arabic (عربي)</option>
+              <option value="French">French</option>
+              <option value="Spanish">Spanish</option>
+            </select>
+          </div>
+
+          <div class="pt-3 border-t border-slate-800 flex items-center justify-end gap-2 mt-2">
+            <button type="button" id="btn-cancel-add-student" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition">
+              Cancel
+            </button>
+            <button type="submit" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-lg shadow-indigo-600/20 transition flex items-center gap-1.5">
+              <i class="fa-solid fa-plus"></i> Add & Select
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- MODAL 4: ADMIN & USER MANAGEMENT PANEL -->
     <div id="modal-admin" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
       <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col">
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -499,7 +567,7 @@
       </div>
     </div>
 
-    <!-- MODAL 4: GITHUB READINESS & DEPLOYMENT GUIDE -->
+    <!-- MODAL 5: GITHUB READINESS & DEPLOYMENT GUIDE -->
     <div id="modal-guide" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
       <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col">
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -537,11 +605,11 @@
 
   <script>
     const DEFAULT_STUDENTS = [
-      { id: "STD101", code: "S1001", name: "Alexander Wright", grade: "Grade 10", classSection: "10-A", language: "English", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD102", code: "S1002", name: "Sophia Martinez", grade: "Grade 10", classSection: "10-B", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD103", code: "S1003", name: "Liam Johnson", grade: "Grade 11", classSection: "11-A", language: "English", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD104", code: "S1004", name: "Amina Al-Mansoor", grade: "Grade 11", classSection: "11-C", language: "Arabic", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD105", code: "S1005", name: "Noah Chen", grade: "Grade 9", classSection: "9-A", language: "English", status: "Pending", photoFilename: "", photoData: null }
+      { id: "STD101", code: "S1001", name: "ڕێبین ئەحمەد", grade: "پۆلی 10", classSection: "10-A", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD102", code: "S1002", name: "شێنێ بڕوا", grade: "پۆلی 10", classSection: "10-B", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD103", code: "S1003", name: "Alexander Wright", grade: "Grade 11", classSection: "11-A", language: "English", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD104", code: "S1004", name: "ئالان پشتیوان", grade: "پۆلی 11", classSection: "11-C", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null },
+      { id: "STD105", code: "S1005", name: "ژینۆ هۆشیار", grade: "پۆلی 9", classSection: "9-A", language: "Kurdish (سۆرانی)", status: "Pending", photoFilename: "", photoData: null }
     ];
 
     const DEFAULT_ADMIN = { id: "usr_admin", name: "System Admin", email: "admin@school.edu", role: "Admin" };
@@ -555,7 +623,7 @@
       capturedTempData: null,
       videoStream: null,
       isMirrored: true,
-      settings: { format: "image/jpeg", quality: 0.95, resolution: "1200x1500", autocenter: true, flipCaptured: true },
+      settings: { format: "image/jpeg", quality: 0.90, resolution: "1200x1500", autocenter: true, flipCaptured: true },
       filters: { search: "", grade: "ALL", classSection: "ALL", language: "ALL", status: "ALL" }
     };
 
@@ -572,13 +640,12 @@
         console.warn("LocalStorage read error, resetting defaults", e);
       }
 
-      // Ensure Admin account always exists
-      if (!state.users.some(u => u.role === 'Admin')) {
-        state.users.unshift(DEFAULT_ADMIN);
+      if (!state.users || state.users.length === 0 || !state.users.some(u => u.role === 'Admin')) {
+        state.users = [DEFAULT_ADMIN, ...(state.users || [])];
       }
 
       if (!state.students || state.students.length === 0) {
-        state.students = [...DEFAULT_STUDENTS];
+        state.students = JSON.parse(JSON.stringify(DEFAULT_STUDENTS));
       }
     }
 
@@ -595,7 +662,13 @@
     }
 
     function sanitizeFilenamePart(str) {
-      return String(str || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (!str) return '';
+      // Retain all Unicode scripts (Kurdish Sorani, Arabic, English, Numbers)
+      // Strip only OS-forbidden characters (\ / : * ? " < > |) and control chars
+      return String(str)
+        .trim()
+        .replace(/[\\/:*?"<>|\r\n\t\0]/g, '')
+        .replace(/\s+/g, '_');
     }
 
     function generateStudentPhotoFilename(student, format = 'image/jpeg') {
@@ -627,14 +700,19 @@
       state.currentUser = user;
       state.isLoggedIn = true;
 
-      document.getElementById('current-user-role').textContent = `${user.name} (${user.role})`;
-      document.getElementById('auth-overlay').classList.add('hidden');
+      const roleBadge = document.getElementById('current-user-role');
+      if (roleBadge) roleBadge.textContent = `${user.name} (${user.role})`;
+      
+      const authOverlay = document.getElementById('auth-overlay');
+      if (authOverlay) authOverlay.classList.add('hidden');
 
       const adminBtn = document.getElementById('btn-admin-panel');
-      if (user.role === 'Admin') {
-        adminBtn.classList.remove('hidden');
-      } else {
-        adminBtn.classList.add('hidden');
+      if (adminBtn) {
+        if (user.role === 'Admin') {
+          adminBtn.classList.remove('hidden');
+        } else {
+          adminBtn.classList.add('hidden');
+        }
       }
 
       showToast(`Welcome back, ${user.name}!`, "success");
@@ -689,10 +767,10 @@
 
       if (filtered.length === 0) {
         tbody.innerHTML = '';
-        emptyState.classList.remove('hidden');
+        if (emptyState) emptyState.classList.remove('hidden');
         return;
       }
-      emptyState.classList.add('hidden');
+      if (emptyState) emptyState.classList.add('hidden');
 
       tbody.innerHTML = filtered.map(s => {
         const isSelected = s.id === state.activeStudentId;
@@ -709,10 +787,10 @@
           <tr onclick="selectStudentRow('${s.id}')" class="cursor-pointer transition hover:bg-slate-800/80 ${isSelected ? 'bg-brand-900/30 border-l-4 border-l-brand-500' : ''}">
             <td class="py-2.5 px-4">${avatarHtml}</td>
             <td class="py-2.5 px-4 font-mono text-brand-400 font-semibold">${s.code}</td>
-            <td class="py-2.5 px-4 font-medium text-slate-100">${s.name}</td>
-            <td class="py-2.5 px-4 text-slate-400">${s.grade}</td>
-            <td class="py-2.5 px-4 text-slate-400">${s.classSection}</td>
-            <td class="py-2.5 px-4 text-slate-400">${s.language}</td>
+            <td class="py-2.5 px-4 font-medium text-slate-100" dir="auto">${s.name}</td>
+            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.grade}</td>
+            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.classSection}</td>
+            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.language}</td>
             <td class="py-2.5 px-4">${statusBadge}</td>
             <td class="py-2.5 px-4 text-right">
               <button class="px-2.5 py-1 rounded-lg ${isSelected ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-300'} text-[11px] font-semibold">
@@ -733,7 +811,9 @@
       document.getElementById('active-student-code').textContent = `Code: ${student.code}`;
       document.getElementById('active-student-grade').textContent = `Grade: ${student.grade}`;
       document.getElementById('active-student-status').textContent = student.status;
-      document.getElementById('btn-snap-photo').disabled = false;
+      
+      const snapBtn = document.getElementById('btn-snap-photo');
+      if (snapBtn) snapBtn.disabled = false;
 
       renderStudentTable();
     }
@@ -756,9 +836,249 @@
       }
     }
 
+    function handleAddManualStudent(e) {
+      e.preventDefault();
+      const codeInput = document.getElementById('manual-student-code').value.trim();
+      const nameInput = document.getElementById('manual-student-name').value.trim();
+      const gradeInput = document.getElementById('manual-student-grade').value.trim();
+      const classInput = document.getElementById('manual-student-class').value.trim();
+      const langInput = document.getElementById('manual-student-language').value;
+
+      if (!nameInput) {
+        showToast("Please enter student name", "warning");
+        return;
+      }
+
+      const generatedCode = codeInput || `S${1000 + state.students.length + 1}`;
+      const newStudent = {
+        id: `STD_${Date.now()}`,
+        code: generatedCode,
+        name: nameInput,
+        grade: gradeInput || "Grade 10",
+        classSection: classInput || "10-A",
+        language: langInput || "English",
+        status: "Pending",
+        photoFilename: "",
+        photoData: null
+      };
+
+      state.students.unshift(newStudent);
+      saveState();
+      renderFilters();
+      renderStudentTable();
+      selectStudentRow(newStudent.id);
+
+      document.getElementById('modal-add-student').classList.add('hidden');
+      document.getElementById('form-add-student').reset();
+      showToast(`Student ${nameInput} added and selected!`, "success");
+    }
+
     function startFaceTrackingAnimation() {
       const badge = document.getElementById('face-lock-badge');
       if (badge) badge.classList.remove('opacity-0');
+    }
+
+    async function initCameraDevices() {
+      const cameraSelect = document.getElementById('camera-select');
+      const cameraStatus = document.getElementById('camera-status-indicator');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        if (cameraStatus) {
+          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Camera Unsupported';
+          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
+        }
+        return;
+      }
+
+      try {
+        let devices = await navigator.mediaDevices.enumerateDevices();
+        let videoDevices = devices.filter(d => d.kind === 'videoinput');
+        const hasLabels = videoDevices.some(d => d.label !== '');
+
+        let initialStream = null;
+        if (!hasLabels) {
+          try {
+            initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            devices = await navigator.mediaDevices.enumerateDevices();
+            videoDevices = devices.filter(d => d.kind === 'videoinput');
+          } catch (e) {
+            console.warn('Initial camera probe permission warning:', e);
+          }
+        }
+
+        if (cameraSelect) {
+          cameraSelect.innerHTML = '';
+          if (videoDevices.length === 0) {
+            cameraSelect.innerHTML = '<option value="">No Camera Detected</option>';
+          } else {
+            videoDevices.forEach((device, index) => {
+              const opt = document.createElement('option');
+              opt.value = device.deviceId;
+              opt.textContent = device.label || `Camera ${index + 1}`;
+              cameraSelect.appendChild(opt);
+            });
+          }
+        }
+
+        if (initialStream) {
+          initialStream.getTracks().forEach(track => track.stop());
+          // Wait 300ms for OS camera driver to release hardware lock
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        if (videoDevices.length > 0) {
+          await startCameraStream(videoDevices[0].deviceId);
+        }
+      } catch (err) {
+        console.error('Camera access error:', err);
+        if (cameraStatus) {
+          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Access Denied / In Use';
+          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
+        }
+        showToast('Camera in use or permission denied. Close other apps & click reconnect.', 'error');
+      }
+    }
+
+    async function startCameraStream(deviceId, retries = 2) {
+      const video = document.getElementById('webcam-video');
+      const cameraStatus = document.getElementById('camera-status-indicator');
+      if (!video) return;
+
+      if (state.videoStream) {
+        state.videoStream.getTracks().forEach(track => track.stop());
+        state.videoStream = null;
+        // Delay to allow OS camera driver to release hardware lock
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      const constraints = {
+        video: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          width: { ideal: 3840, max: 3840 },
+          height: { ideal: 2160, max: 2160 },
+          frameRate: { ideal: 30, max: 60 }
+        }
+      };
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        state.videoStream = stream;
+        video.srcObject = stream;
+        if (cameraStatus) {
+          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Camera Ready';
+          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20';
+        }
+        startFaceTrackingAnimation();
+      } catch (err) {
+        console.warn('Camera stream request failed:', err);
+        if (retries > 0) {
+          // Pause briefly and retry without strict constraints or device ID
+          await new Promise(r => setTimeout(r, 400));
+          return startCameraStream(retries === 1 ? null : deviceId, retries - 1);
+        }
+
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          state.videoStream = fallbackStream;
+          video.srcObject = fallbackStream;
+          if (cameraStatus) {
+            cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Active (Standard)';
+            cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20';
+          }
+          startFaceTrackingAnimation();
+        } catch (e) {
+          if (cameraStatus) {
+            cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Device in Use';
+            cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
+          }
+          showToast('Camera is busy/in use by another program or tab. Close it and click reconnect.', 'error');
+        }
+      }
+    }
+
+    function snapPhoto() {
+      if (!state.activeStudentId) {
+        showToast('Please select a student from the roster first', 'warning');
+        return;
+      }
+
+      const video = document.getElementById('webcam-video');
+      const cropCanvas = document.getElementById('crop-canvas');
+      if (!video || !video.videoWidth) {
+        showToast('Camera feed is not active', 'error');
+        return;
+      }
+
+      const student = state.students.find(s => s.id === state.activeStudentId);
+      if (!student) return;
+
+      const [resW, resH] = state.settings.resolution.split('x').map(Number);
+      cropCanvas.width = resW;
+      cropCanvas.height = resH;
+
+      const ctx = cropCanvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      const vW = video.videoWidth;
+      const vH = video.videoHeight;
+
+      const targetAspect = resW / resH;
+      let cropWidth, cropHeight, offsetX, offsetY;
+
+      if (vW / vH > targetAspect) {
+        cropHeight = vH;
+        cropWidth = vH * targetAspect;
+        offsetX = (vW - cropWidth) / 2;
+        offsetY = 0;
+      } else {
+        cropWidth = vW;
+        cropHeight = vW / targetAspect;
+        offsetX = 0;
+        offsetY = (vH - cropHeight) / 2;
+      }
+
+      ctx.save();
+      if (state.settings.flipCaptured) {
+        ctx.translate(resW, 0);
+        ctx.scale(-1, 1);
+      }
+
+      ctx.drawImage(video, offsetX, offsetY, cropWidth, cropHeight, 0, 0, resW, resH);
+      ctx.restore();
+
+      const filename = generateStudentPhotoFilename(student, state.settings.format);
+      const dataUrl = cropCanvas.toDataURL(state.settings.format, state.settings.quality);
+
+      state.capturedTempData = { dataUrl, filename };
+
+      document.getElementById('preview-image').src = dataUrl;
+      document.getElementById('preview-student-name').textContent = student.name;
+      document.getElementById('preview-student-code').textContent = `CODE: ${student.code}`;
+      document.getElementById('preview-filename-info').textContent = `Filename: ${filename}`;
+      document.getElementById('modal-preview').classList.remove('hidden');
+    }
+
+    function flipPreviewImage() {
+      if (!state.capturedTempData || !state.capturedTempData.dataUrl) return;
+
+      const img = new Image();
+      img.onload = function() {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const ctx = tempCanvas.getContext('2d');
+        ctx.imageSmoothingQuality = 'high';
+
+        ctx.translate(tempCanvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, 0, 0);
+
+        const newUrl = tempCanvas.toDataURL(state.settings.format, state.settings.quality);
+        state.capturedTempData.dataUrl = newUrl;
+        document.getElementById('preview-image').src = newUrl;
+        showToast('Photo flipped horizontally', 'info');
+      };
+      img.src = state.capturedTempData.dataUrl;
     }
 
     function exportToExcel(data, filename) {
@@ -793,186 +1113,6 @@
 
     function downloadSampleExcel() {
       exportToExcel(DEFAULT_STUDENTS, "EduPhoto_Sample_Student_Import_Template.xlsx");
-    }
-
-    function exportPhotosZip() {
-      exportUnifiedBundle();
-    }
-
-    async function initCameraDevices() {
-      const cameraSelect = document.getElementById('camera-select');
-      const cameraStatus = document.getElementById('camera-status-indicator');
-      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-        if (cameraStatus) {
-          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Camera Unsupported';
-          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
-        }
-        return;
-      }
-
-      try {
-        const initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        initialStream.getTracks().forEach(track => track.stop());
-
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-        if (cameraSelect) {
-          cameraSelect.innerHTML = '';
-          if (videoDevices.length === 0) {
-            cameraSelect.innerHTML = '<option value="">No Camera Detected</option>';
-          } else {
-            videoDevices.forEach((device, index) => {
-              const opt = document.createElement('option');
-              opt.value = device.deviceId;
-              opt.textContent = device.label || `Camera ${index + 1}`;
-              cameraSelect.appendChild(opt);
-            });
-          }
-        }
-
-        if (videoDevices.length > 0) {
-          startCameraStream(videoDevices[0].deviceId);
-        }
-      } catch (err) {
-        console.error('Camera access error:', err);
-        if (cameraStatus) {
-          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Access Denied';
-          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
-        }
-      }
-    }
-
-    async function startCameraStream(deviceId) {
-      const video = document.getElementById('webcam-video');
-      const cameraStatus = document.getElementById('camera-status-indicator');
-      if (!video) return;
-
-      if (state.videoStream) {
-        state.videoStream.getTracks().forEach(track => track.stop());
-      }
-
-      const constraints = {
-        video: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          width: { ideal: 3840, max: 3840 },
-          height: { ideal: 2160, max: 2160 },
-          frameRate: { ideal: 30, max: 60 }
-        }
-      };
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        state.videoStream = stream;
-        video.srcObject = stream;
-        if (cameraStatus) {
-          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Camera Ready';
-          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20';
-        }
-        startFaceTrackingAnimation();
-      } catch (err) {
-        console.warn('Fallback stream due to constraint mismatch:', err);
-        try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          state.videoStream = fallbackStream;
-          video.srcObject = fallbackStream;
-          if (cameraStatus) {
-            cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Active (Standard)';
-            cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20';
-          }
-          startFaceTrackingAnimation();
-        } catch (e) {
-          showToast('Could not start video stream.', 'error');
-        }
-      }
-    }
-
-    function snapPhoto() {
-      if (!state.activeStudentId) {
-        showToast('Please select a student from the roster first', 'warning');
-        return;
-      }
-
-      const video = document.getElementById('webcam-video');
-      const cropCanvas = document.getElementById('crop-canvas');
-      if (!video || !video.videoWidth) {
-        showToast('Camera feed is not active', 'error');
-        return;
-      }
-
-      const student = state.students.find(s => s.id === state.activeStudentId);
-      if (!student) return;
-
-      const [resW, resH] = state.settings.resolution.split('x').map(Number);
-      cropCanvas.width = resW;
-      cropCanvas.height = resH;
-
-      const ctx = cropCanvas.getContext('2d');
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-
-      const vW = video.videoWidth;
-      const vH = video.videoHeight;
-
-      const targetAspect = resW / resH; // 4/5 ratio = 0.8
-      let cropWidth, cropHeight, offsetX, offsetY;
-
-      if (vW / vH > targetAspect) {
-        cropHeight = vH;
-        cropWidth = vH * targetAspect;
-        offsetX = (vW - cropWidth) / 2;
-        offsetY = 0;
-      } else {
-        cropWidth = vW;
-        cropHeight = vW / targetAspect;
-        offsetX = 0;
-        offsetY = (vH - cropHeight) / 2;
-      }
-
-      ctx.save();
-      // Apply horizontal flip if enabled in settings
-      if (state.settings.flipCaptured) {
-        ctx.translate(resW, 0);
-        ctx.scale(-1, 1);
-      }
-
-      ctx.drawImage(video, offsetX, offsetY, cropWidth, cropHeight, 0, 0, resW, resH);
-      ctx.restore();
-
-      const filename = generateStudentPhotoFilename(student, state.settings.format);
-      const dataUrl = cropCanvas.toDataURL(state.settings.format, state.settings.quality);
-
-      state.capturedTempData = { dataUrl, filename };
-
-      document.getElementById('preview-image').src = dataUrl;
-      document.getElementById('preview-student-name').textContent = student.name;
-      document.getElementById('preview-student-code').textContent = `CODE: ${student.code}`;
-      document.getElementById('preview-filename-info').textContent = `Filename: ${filename}`;
-      document.getElementById('modal-preview').classList.remove('hidden');
-    }
-
-    function flipPreviewImage() {
-      if (!state.capturedTempData || !state.capturedTempData.dataUrl) return;
-
-      const img = new Image();
-      img.onload = function() {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
-        const ctx = tempCanvas.getContext('2d');
-        ctx.imageSmoothingQuality = 'high';
-
-        // Flip image horizontally
-        ctx.translate(tempCanvas.width, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(img, 0, 0);
-
-        const newUrl = tempCanvas.toDataURL(state.settings.format, state.settings.quality);
-        state.capturedTempData.dataUrl = newUrl;
-        document.getElementById('preview-image').src = newUrl;
-        showToast('Photo flipped horizontally', 'info');
-      };
-      img.src = state.capturedTempData.dataUrl;
     }
 
     async function exportUnifiedBundle() {
@@ -1160,7 +1300,22 @@
     }
 
     function setupEventListeners() {
-      // Modals
+      // Manual student creation modal triggers
+      document.getElementById('btn-open-add-student')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student')?.classList.remove('hidden');
+      });
+      document.getElementById('btn-empty-add-manual')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student')?.classList.remove('hidden');
+      });
+      document.getElementById('btn-close-add-student')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student')?.classList.add('hidden');
+      });
+      document.getElementById('btn-cancel-add-student')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student')?.classList.add('hidden');
+      });
+      document.getElementById('form-add-student')?.addEventListener('submit', handleAddManualStudent);
+
+      // Settings Modal
       document.getElementById('btn-show-settings')?.addEventListener('click', () => {
         const flipSettingEl = document.getElementById('setting-flip-captured');
         if (flipSettingEl) flipSettingEl.checked = state.settings.flipCaptured !== false;
@@ -1185,6 +1340,7 @@
         if (valDisp) valDisp.textContent = parseFloat(e.target.value).toFixed(2);
       });
 
+      // Guide Modal
       document.getElementById('btn-show-guide')?.addEventListener('click', () => {
         document.getElementById('modal-guide')?.classList.remove('hidden');
       });
@@ -1192,6 +1348,7 @@
         document.getElementById('modal-guide')?.classList.add('hidden');
       });
 
+      // Admin Panel Modal
       document.getElementById('btn-admin-panel')?.addEventListener('click', () => {
         renderUsersList();
         document.getElementById('modal-admin')?.classList.remove('hidden');
@@ -1261,6 +1418,11 @@
         }
       });
 
+      document.getElementById('btn-retry-camera')?.addEventListener('click', () => {
+        showToast('Re-initializing camera...', 'info');
+        initCameraDevices();
+      });
+
       document.getElementById('btn-toggle-camera')?.addEventListener('click', () => {
         state.isMirrored = !state.isMirrored;
         const video = document.getElementById('webcam-video');
@@ -1284,29 +1446,29 @@
       setupEventListeners();
 
       // Auth form submission
-      document.getElementById('login-form').addEventListener('submit', (e) => {
+      document.getElementById('login-form')?.addEventListener('submit', (e) => {
         e.preventDefault();
         const selectedUserId = document.getElementById('login-user-select').value;
         handleLogin(selectedUserId);
       });
 
       // One-click quick admin login
-      document.getElementById('btn-quick-admin').addEventListener('click', () => {
+      document.getElementById('btn-quick-admin')?.addEventListener('click', () => {
         const adminUser = state.users.find(u => u.role === 'Admin') || DEFAULT_ADMIN;
         handleLogin(adminUser.id);
       });
 
       // Filter search listener
-      document.getElementById('filter-search').addEventListener('input', (e) => {
+      document.getElementById('filter-search')?.addEventListener('input', (e) => {
         state.filters.search = e.target.value;
         renderStudentTable();
       });
 
       // Logout event
-      document.getElementById('btn-logout').addEventListener('click', () => {
+      document.getElementById('btn-logout')?.addEventListener('click', () => {
         state.isLoggedIn = false;
         state.currentUser = null;
-        document.getElementById('auth-overlay').classList.remove('hidden');
+        document.getElementById('auth-overlay')?.classList.remove('hidden');
         showToast("Logged out successfully.", "info");
       });
     };
