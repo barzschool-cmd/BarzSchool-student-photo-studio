@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Student Photo Capture & ID Management System</title>
   
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -34,12 +35,95 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <!-- FileSaver for downloading generated zip files -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <!-- MediaPipe Face Detection AI -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
 
-  <!-- Real-time Cloud Data & Photo Persistence Module -->
+  <script>
+    window.showToast = function(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      if (!container) {
+        console.log(`[${type.toUpperCase()}] ${message}`);
+        return;
+      }
+      const toast = document.createElement('div');
+      const bgColors = {
+        success: 'bg-emerald-600 border-emerald-500 text-white',
+        error: 'bg-rose-600 border-rose-500 text-white',
+        warning: 'bg-amber-600 border-amber-500 text-white',
+        info: 'bg-brand-600 border-brand-500 text-white'
+      };
+      const icons = {
+        success: 'fa-circle-check',
+        error: 'fa-circle-xmark',
+        warning: 'fa-triangle-exclamation',
+        info: 'fa-circle-info'
+      };
+      toast.className = `px-4 py-3 rounded-xl border shadow-xl text-xs font-semibold flex items-center gap-2.5 transition-all duration-300 transform translate-y-2 opacity-0 pointer-events-auto max-w-sm ${bgColors[type] || bgColors.info}`;
+      toast.innerHTML = `<i class="fa-solid ${icons[type] || icons.info} text-sm shrink-0"></i> <span>${message}</span>`;
+      container.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    };
+    function showToast(message, type) {
+      window.showToast(message, type);
+    }
+
+    // Automatically compresses high-resolution photos so they stay safely under Firestore's 1,048,487 byte document limit
+    window.optimizePhotoForCloud = async function(dataUrl, maxBytes = 850000) {
+      if (!dataUrl || typeof dataUrl !== 'string' || dataUrl.length <= maxBytes) {
+        return dataUrl;
+      }
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          let quality = 0.82;
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
+
+          // Scale dimensions if larger than standard print ID requirements
+          if (width > 1600 || height > 2000) {
+            const scale = Math.min(1600 / width, 2000 / height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+
+          let result = canvas.toDataURL('image/jpeg', quality);
+          while (result.length > maxBytes && quality > 0.45) {
+            quality -= 0.08;
+            result = canvas.toDataURL('image/jpeg', quality);
+          }
+          if (result.length > maxBytes) {
+            canvas.width = Math.round(width * 0.85);
+            canvas.height = Math.round(height * 0.85);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            result = canvas.toDataURL('image/jpeg', 0.75);
+          }
+          resolve(result);
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      });
+    };
+  </script>
+
   <script type="module">
     import { initializeApp, getApps, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'eduphoto-app';
     let db = null;
@@ -83,10 +167,8 @@
       const cloudBadge = document.getElementById('cloud-sync-badge');
 
       if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey === "demo") {
-        console.info("Running in local storage mode (no cloud config).");
-        if (cloudBadge) {
-          cloudBadge.classList.add('hidden');
-        }
+        console.info("Running in local storage mode.");
+        if (cloudBadge) cloudBadge.classList.add('hidden');
         return;
       }
 
@@ -99,7 +181,6 @@
         db = getFirestore(app);
         auth = getAuth(app);
 
-        // Attempt authentication with fallback
         try {
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
@@ -107,8 +188,7 @@
             await signInAnonymously(auth);
           }
         } catch (authErr) {
-          console.warn("Anonymous auth skipped/disabled in console:", authErr.message);
-          // Continue anyway as Firestore might allow public reads/writes in Test Mode
+          console.warn("Anonymous auth notice:", authErr.message);
         }
 
         isCloudReady = true;
@@ -133,49 +213,61 @@
         }, (err) => {
           console.warn("Cloud sync snapshot notice:", err);
           if (err.code === 'permission-denied') {
-            showToast("Firebase Rules Blocked Connection: Set Firestore Security Rules to Test Mode (allow read, write: if true;)", "error");
+            showToast("Firebase Security Rules Blocked Access: Set Rules to allow read, write: if true;", "error");
           }
         });
 
         showToast("Cloud Database Connected Live!", "success");
 
       } catch (err) {
-        console.warn("Cloud sync connection error:", err);
+        console.warn("Cloud sync error:", err);
         if (cloudBadge) cloudBadge.classList.add('hidden');
-        
-        let errMsg = err.message;
-        if (err.code === 'permission-denied') {
-          errMsg = "Firestore Security Rules are blocking access. Go to Firebase Console > Firestore > Rules and set: allow read, write: if true;";
-        } else if (err.message?.includes("invalid-api-key")) {
-          errMsg = "Invalid API Key. Please verify your Firebase Config in Settings.";
-        }
-        
-        showToast("Could not connect to Firebase: " + errMsg, "error");
+        showToast("Could not connect to Firebase: " + err.message, "error");
       }
     }
 
     window.saveStudentToCloud = async function(student) {
-      if (!isCloudReady || !db) return;
+      if (!isCloudReady || !db || !student) return;
       try {
-        const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id);
-        await setDoc(studentDocRef, student, { merge: true });
-      } catch (err) {
-        console.error("Cloud save failed for student:", err);
-        if (err.code === 'permission-denied') {
-          showToast("Cloud save blocked by Firebase Security Rules. Check Firebase Rules in Settings.", "warning");
+        let studentToSave = student;
+        if (student.photo && student.photo.length > 850000) {
+          const safePhoto = await window.optimizePhotoForCloud(student.photo);
+          student.photo = safePhoto;
+          studentToSave = { ...student, photo: safePhoto };
         }
+        const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id);
+        await setDoc(studentDocRef, studentToSave, { merge: true });
+      } catch (err) {
+        console.error("Cloud save failed:", err);
       }
     };
 
     window.saveAllStudentsToCloud = async function(students) {
-      if (!isCloudReady || !db) return;
+      if (!isCloudReady || !db || !students) return;
       try {
         for (const s of students) {
+          let studentToSave = s;
+          if (s.photo && s.photo.length > 850000) {
+            const safePhoto = await window.optimizePhotoForCloud(s.photo);
+            s.photo = safePhoto;
+            studentToSave = { ...s, photo: safePhoto };
+          }
           const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', s.id);
-          await setDoc(studentDocRef, s, { merge: true });
+          await setDoc(studentDocRef, studentToSave, { merge: true });
         }
       } catch (err) {
         console.error("Batch cloud save failed:", err);
+      }
+    };
+
+    window.deleteStudentFromCloud = async function(studentId) {
+      if (!isCloudReady || !db) return;
+      try {
+        const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', studentId);
+        await deleteDoc(studentDocRef);
+        console.log("Deleted student from Firestore:", studentId);
+      } catch (err) {
+        console.error("Cloud deletion failed:", err);
       }
     };
 
@@ -184,6 +276,15 @@
   </script>
 
   <style>
+    html, body {
+      height: 100%;
+      height: 100dvh;
+      overscroll-behavior-y: none;
+    }
+    .touch-scroll {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
     .custom-scrollbar::-webkit-scrollbar {
       width: 6px;
       height: 6px;
@@ -203,42 +304,9 @@
     }
   </style>
 </head>
-<body class="h-full flex flex-col font-sans antialiased text-slate-100 bg-slate-950 overflow-hidden">
+<body class="h-full h-[100dvh] flex flex-col font-sans antialiased text-slate-100 bg-slate-950 overflow-hidden select-none sm:select-auto">
 
-  <!-- AUTHENTICATION OVERLAY SCREEN -->
-  <div id="auth-overlay" class="fixed inset-0 bg-slate-950 z-50 flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-8 shadow-2xl flex flex-col items-center">
-      <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-brand-500/30 mb-4">
-        <i class="fa-solid fa-user-lock"></i>
-      </div>
-      <h2 class="text-xl font-bold text-white mb-1">EduPhoto PRO</h2>
-      <p class="text-xs text-slate-400 mb-6 text-center">Please select your account to access the photo capture system.</p>
-
-      <form id="login-form" class="w-full flex flex-col gap-4">
-        <div>
-          <label class="block text-xs text-slate-400 mb-1 font-semibold">Select User Account</label>
-          <select id="login-user-select" class="w-full py-2.5 px-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-brand-500">
-            <!-- Dynamic users list -->
-          </select>
-        </div>
-
-        <div>
-          <label class="block text-xs text-slate-400 mb-1 font-semibold">Access Password / PIN</label>
-          <input type="password" id="login-password" value="123456" placeholder="Enter password (default: 123456)..." class="w-full py-2.5 px-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-brand-500">
-        </div>
-
-        <button type="submit" class="w-full py-3 bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-brand-600/25 transition flex items-center justify-center gap-2 mt-2">
-          <i class="fa-solid fa-right-to-bracket"></i> Log In to System
-        </button>
-
-        <button type="button" id="btn-quick-admin" class="w-full py-2.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 font-semibold text-xs rounded-xl border border-indigo-500/30 transition flex items-center justify-center gap-2">
-          <i class="fa-solid fa-user-shield"></i> Instant Admin Login
-        </button>
-      </form>
-    </div>
-  </div>
-
-  <div id="app" class="flex flex-col h-full w-full">
+  <div id="app" class="flex flex-col h-full w-full overflow-hidden">
     <!-- TOP NAVIGATION BAR -->
     <header class="h-16 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between shrink-0 z-20">
       <div class="flex items-center gap-3">
@@ -268,100 +336,82 @@
           <span id="stat-captured" class="font-bold text-emerald-300">0</span>
         </div>
         <div class="w-px h-4 bg-slate-800"></div>
-        <div id="cloud-sync-badge" class="hidden flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 cursor-pointer" onclick="document.getElementById('btn-show-settings').click()" title="Cloud database active. Click to view configuration.">
+        <div id="cloud-sync-badge" class="hidden flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 cursor-pointer" onclick="document.getElementById('btn-show-settings').click()" title="Connected live to Firestore cloud database">
           <i class="fa-solid fa-cloud-arrow-up animate-pulse"></i> Multi-Laptop Cloud Synced
         </div>
       </div>
 
       <!-- Right Navigation Actions -->
       <div class="flex items-center gap-3">
-        <span id="user-role-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-          <i class="fa-solid fa-user-shield"></i> <span id="current-user-role">Admin</span>
-        </span>
         <button id="btn-show-settings" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition relative" title="Settings & Cloud Sync Setup">
           <i class="fa-solid fa-sliders"></i>
         </button>
         <button id="btn-show-guide" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition" title="GitHub & Deployment Guide">
           <i class="fa-solid fa-book-open"></i>
         </button>
-        <button id="btn-admin-panel" class="hidden p-2.5 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 transition" title="User Management">
+        <button id="btn-admin-panel" class="p-2.5 rounded-lg bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 transition" title="User Management">
           <i class="fa-solid fa-users-gear"></i>
-        </button>
-        <button id="btn-logout" class="px-3 py-2 text-xs font-semibold rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20 transition flex items-center gap-1.5">
-          <i class="fa-solid fa-right-from-bracket"></i> Logout
         </button>
       </div>
     </header>
 
     <!-- MOBILE TOP VIEW TAB CONTROLLER -->
-    <div class="flex md:hidden bg-slate-900 border-b border-slate-800 text-xs font-semibold">
-      <button id="tab-studio" onclick="switchMobileTab('studio')" class="flex-1 py-2.5 text-center text-brand-400 border-b-2 border-brand-500">
-        <i class="fa-solid fa-camera"></i> Studio
-      </button>
-      <button id="tab-roster" onclick="switchMobileTab('roster')" class="flex-1 py-2.5 text-center text-slate-400 border-b-2 border-transparent">
+    <div class="flex md:hidden bg-slate-900 border-b border-slate-800 text-xs font-semibold shrink-0 z-10">
+      <button id="tab-roster" onclick="switchMobileTab('roster')" class="flex-1 py-3 text-center text-brand-400 border-b-2 border-brand-500 transition">
         <i class="fa-solid fa-list-check"></i> Roster
       </button>
-      <button id="tab-actions" onclick="switchMobileTab('actions')" class="flex-1 py-2.5 text-center text-slate-400 border-b-2 border-transparent">
+      <button id="tab-studio" onclick="switchMobileTab('studio')" class="flex-1 py-3 text-center text-slate-400 border-b-2 border-transparent transition">
+        <i class="fa-solid fa-camera"></i> Studio
+      </button>
+      <button id="tab-actions" onclick="switchMobileTab('actions')" class="flex-1 py-3 text-center text-slate-400 border-b-2 border-transparent transition">
         <i class="fa-solid fa-bolt"></i> Actions
       </button>
     </div>
 
     <!-- MAIN CONTENT AREA -->
-    <main class="flex-1 flex overflow-hidden flex-col md:flex-row">
-      <!-- LEFT SIDEBAR: Action & Export Controls -->
-      <aside id="panel-sidebar" class="w-full md:w-64 bg-slate-900/90 border-r border-slate-800 flex flex-col shrink-0 p-4 gap-3 overflow-y-auto custom-scrollbar">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-          <i class="fa-solid fa-box-archive text-brand-400"></i> Actions & Data
-        </h2>
-
-        <!-- MANUAL STUDENT ADD BUTTON -->
-        <button id="btn-open-add-student" class="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 transition">
-          <i class="fa-solid fa-user-plus"></i> Add Student Manually
-        </button>
-
-        <button id="btn-import-excel" class="w-full py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-brand-600/20 transition">
-          <i class="fa-solid fa-file-import"></i> Import Excel Data
-        </button>
-        <input type="file" id="excel-file-input" accept=".xlsx, .xls, .csv" class="hidden">
-
-        <!-- UNIFIED EXPORT BUTTON (EXCEL SHEET + PHOTOS IN 1 ZIP) -->
-        <button id="btn-export-bundle" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition border border-emerald-500/30">
-          <i class="fa-solid fa-file-zipper text-base"></i> Export Excel & Photos Bundle
-        </button>
-
-        <button id="btn-download-sample" class="w-full py-2 px-3 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-xs border border-slate-800 transition flex items-center justify-center gap-2">
-          <i class="fa-solid fa-download"></i> Sample Excel Template
-        </button>
-
-        <hr class="border-slate-800 my-1">
-
-        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 mt-auto">
-          <h3 class="text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
-            <span>Export Remaining</span>
-            <i class="fa-solid fa-user-clock text-amber-400"></i>
-          </h3>
-          <p class="text-[11px] text-slate-400 mb-2.5 leading-relaxed">Download list of students pending photos.</p>
-          <button id="btn-export-remaining" class="w-full py-2 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-medium rounded-lg border border-amber-500/20 transition flex items-center justify-center gap-1.5">
-            <i class="fa-solid fa-file-export"></i> Remaining Excel
-          </button>
-        </div>
-      </aside>
-
-      <!-- CENTER: STUDENT TABLE LIST WITH TOP FILTERS PANEL -->
-      <section id="panel-roster" class="flex-1 flex flex-col bg-slate-950 min-w-0 overflow-hidden">
+    <main class="flex-1 flex min-h-0 overflow-hidden flex-col md:flex-row relative">
+      <!-- CENTER: STUDENT TABLE LIST WITH TOP ACTIONS & FILTERS PANEL -->
+      <section id="panel-roster" class="flex-1 flex flex-col bg-slate-950 min-w-0 overflow-hidden h-full">
         
-        <!-- TOP FILTERS TOOLBAR (POSITIONED DIRECTLY ABOVE STUDENT TABLE) -->
-        <div class="p-4 bg-slate-900 border-b border-slate-800">
-          <div class="flex items-center justify-between mb-3">
+        <!-- TOP ACTIONS TOOLBAR (HORIZONTAL ORDER) -->
+        <div id="top-actions-toolbar" class="p-3 sm:px-4 sm:py-3 bg-slate-900 border-b border-slate-800 shrink-0">
+          <div class="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <button id="btn-import-excel" class="py-2 px-3.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm shadow-brand-600/20 transition whitespace-nowrap">
+              <i class="fa-solid fa-file-import"></i> <span>Import Excel</span>
+            </button>
+            <input type="file" id="excel-file-input" accept=".xlsx, .xls, .csv" class="hidden">
+
+            <button id="btn-open-add-student" class="py-2 px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm shadow-indigo-600/20 transition whitespace-nowrap">
+              <i class="fa-solid fa-user-plus"></i> <span>Add Student</span>
+            </button>
+
+            <!-- UNIFIED EXPORT BUTTON -->
+            <button id="btn-export-bundle" class="py-2 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 transition border border-emerald-500/30 whitespace-nowrap">
+              <i class="fa-solid fa-file-zipper"></i> <span>Export Bundle (Photos & Excel)</span>
+            </button>
+
+            <button id="btn-export-remaining" class="py-2 px-3.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold rounded-xl border border-amber-500/25 transition flex items-center gap-1.5 whitespace-nowrap">
+              <i class="fa-solid fa-user-clock text-amber-400"></i> <span>Remaining Excel</span>
+            </button>
+
+            <button id="btn-download-sample" class="py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white text-xs border border-slate-700/80 transition flex items-center gap-1.5 whitespace-nowrap sm:ml-auto">
+              <i class="fa-solid fa-download"></i> <span>Sample Template</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- TOP FILTERS TOOLBAR -->
+        <div class="p-3 sm:p-4 bg-slate-900/60 border-b border-slate-800 shrink-0">
+          <div class="flex items-center justify-between mb-2 sm:mb-3">
             <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <i class="fa-solid fa-filter text-brand-400"></i> Filters & Search
             </h2>
-            <div class="text-xs text-slate-400">
-              Showing <span id="visible-count" class="font-semibold text-slate-200">0</span> of <span id="total-count" class="font-semibold text-slate-200">0</span> students
+            <div class="text-[11px] text-slate-400">
+              Showing <span id="visible-count" class="font-semibold text-slate-200">0</span> of <span id="total-count" class="font-semibold text-slate-200">0</span>
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
             <!-- Search -->
             <div class="lg:col-span-1">
               <div class="relative">
@@ -405,27 +455,27 @@
         </div>
 
         <!-- Table Info Bar & Clear Button -->
-        <div class="h-10 px-6 bg-slate-900/40 border-b border-slate-800 flex items-center justify-between">
-          <span class="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Student Roster</span>
+        <div class="h-9 px-4 sm:px-6 bg-slate-900/40 border-b border-slate-800 flex items-center justify-between shrink-0">
+          <span class="text-[10px] sm:text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Student Roster (Click Row To Select)</span>
           <button id="btn-reset-data" class="text-xs text-slate-400 hover:text-rose-400 transition flex items-center gap-1">
             <i class="fa-solid fa-trash-can"></i> Clear All Data
           </button>
         </div>
 
         <!-- Student Data Table Container -->
-        <div class="flex-1 overflow-auto custom-scrollbar p-3 sm:p-6">
-          <div class="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-            <table class="w-full text-left text-xs text-slate-300">
+        <div class="flex-1 min-h-0 overflow-auto custom-scrollbar touch-scroll p-2 sm:p-6">
+          <div class="bg-slate-900 rounded-2xl border border-slate-800 overflow-x-auto shadow-xl">
+            <table class="w-full text-left text-xs text-slate-300 min-w-[650px] sm:min-w-full">
               <thead class="bg-slate-800/60 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-800">
                 <tr>
-                  <th class="py-3.5 px-4 font-semibold">Photo</th>
-                  <th class="py-3.5 px-4 font-semibold">Student Code</th>
-                  <th class="py-3.5 px-4 font-semibold">Full Name</th>
-                  <th class="py-3.5 px-4 font-semibold">Grade</th>
-                  <th class="py-3.5 px-4 font-semibold">Class</th>
-                  <th class="py-3.5 px-4 font-semibold">Language</th>
-                  <th class="py-3.5 px-4 font-semibold">Status</th>
-                  <th class="py-3.5 px-4 font-semibold text-right">Action</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Photo</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Student Code</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Full Name</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Grade</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Class</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Language</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold">Status</th>
+                  <th class="py-3 px-3 sm:px-4 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody id="student-table-body" class="divide-y divide-slate-800/60">
@@ -434,13 +484,13 @@
             </table>
 
             <!-- Empty State -->
-            <div id="empty-state" class="p-12 text-center flex flex-col items-center justify-center hidden">
-              <div class="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center text-slate-500 mb-4 text-2xl">
+            <div id="empty-state" class="p-8 sm:p-12 text-center flex flex-col items-center justify-center hidden">
+              <div class="w-14 h-14 rounded-full bg-slate-800 flex items-center justify-center text-slate-500 mb-3 text-xl">
                 <i class="fa-solid fa-folder-open"></i>
               </div>
-              <h3 class="text-slate-300 font-medium text-base mb-1">No Students Found</h3>
+              <h3 class="text-slate-300 font-medium text-sm sm:text-base mb-1">No Students Found</h3>
               <p class="text-slate-500 text-xs max-w-sm mb-4">Add a student manually or import an Excel sheet to start taking photos.</p>
-              <div class="flex gap-2">
+              <div class="flex flex-wrap justify-center gap-2">
                 <button id="btn-empty-add-manual" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/20 transition flex items-center gap-2">
                   <i class="fa-solid fa-user-plus"></i> Add Student
                 </button>
@@ -454,7 +504,7 @@
       </section>
 
       <!-- RIGHT: LIVE CAMERA STUDIO & CAPTURE WORKFLOW -->
-      <section id="panel-studio" class="w-full md:w-96 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 overflow-y-auto custom-scrollbar">
+      <section id="panel-studio" class="hidden md:flex w-full md:w-96 bg-slate-900 border-l border-slate-800 flex-col shrink-0 overflow-y-auto custom-scrollbar touch-scroll h-full">
         <!-- Studio Header -->
         <div class="p-4 border-b border-slate-800 flex items-center justify-between">
           <h2 class="font-semibold text-sm text-slate-200 flex items-center gap-2">
@@ -467,7 +517,12 @@
 
         <!-- Active Student Context Panel & Prominent Snap Button -->
         <div class="p-4 bg-slate-950/80 border-b border-slate-800 flex flex-col gap-3">
-          <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Selected Student</div>
+          <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex justify-between items-center">
+            <span>Selected Student</span>
+            <button id="btn-active-delete-photo" onclick="deleteActiveStudentPhoto()" class="hidden text-rose-400 hover:text-rose-300 text-[10px] font-semibold flex items-center gap-1">
+              <i class="fa-solid fa-trash-can"></i> Delete Photo
+            </button>
+          </div>
           <div id="active-student-card" class="bg-slate-900 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
             <div>
               <div id="active-student-name" dir="auto" class="font-semibold text-sm text-white">Select a student</div>
@@ -479,20 +534,26 @@
             <span id="active-student-status" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">None</span>
           </div>
 
-          <!-- UPPER SNAP BUTTON (ALWAYS VISIBLE) -->
+          <!-- UPPER SNAP BUTTON -->
           <button id="btn-snap-photo" disabled class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs sm:text-sm shadow-lg shadow-brand-500/25 transition flex items-center justify-center gap-2">
             <i class="fa-solid fa-camera-retro text-base"></i> SNAP & AUTO-CROP (4x5)
           </button>
+
+          <!-- NATIVE HIGH-RES DIRECT SHUTTER BUTTON -->
+          <button id="btn-native-shutter" disabled class="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-semibold text-xs border border-slate-700 transition flex items-center justify-center gap-2" title="Trigger native camera shutter or device capture for max sensor megapixels">
+            <i class="fa-solid fa-expand text-brand-400"></i> Direct High-Res Shutter (Full Sensor)
+          </button>
+          <input type="file" id="native-camera-input" accept="image/*" capture="environment" class="hidden">
         </div>
 
         <!-- Live Camera Stream Container -->
         <div class="p-4 flex-1 min-h-[300px] flex flex-col items-center justify-center relative bg-slate-950 overflow-hidden">
           <div class="relative w-full max-w-[280px] sm:max-w-none camera-frame bg-slate-900 rounded-2xl overflow-hidden border-2 border-slate-800 shadow-2xl flex items-center justify-center">
             <!-- Video Element -->
-            <video id="webcam-video" autoplay playsinline class="w-full h-full object-cover transform -scale-x-100"></video>
+            <video id="webcam-video" autoplay playsinline class="w-full h-full object-cover"></video>
             
             <!-- Canvas Overlay for Face Tracking & Bounding Guides -->
-            <canvas id="face-canvas" class="absolute top-0 left-0 w-full h-full pointer-events-none transform -scale-x-100"></canvas>
+            <canvas id="face-canvas" class="absolute top-0 left-0 w-full h-full pointer-events-none"></canvas>
 
             <!-- Guide Overlay (4x5 Passport Style Frame) -->
             <div class="absolute inset-0 border-2 border-dashed border-brand-500/40 rounded-2xl pointer-events-none flex items-center justify-center">
@@ -567,6 +628,43 @@
       </div>
     </div>
 
+    <!-- MODAL 1B: LARGE PHOTO VIEWER MODAL -->
+    <div id="modal-view-photo" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+          <h3 class="font-bold text-slate-200 flex items-center gap-2 text-sm">
+            <i class="fa-solid fa-image text-brand-400"></i> Student Photo Inspector
+          </h3>
+          <button id="btn-close-view-photo" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <div class="p-6 flex flex-col items-center justify-center bg-slate-950 overflow-y-auto">
+          <div class="relative w-64 sm:w-72 aspect-[4/5] bg-slate-900 rounded-2xl overflow-hidden border-2 border-brand-500/50 shadow-2xl mb-4">
+            <img id="view-modal-img" src="" alt="Student High-Res Preview" class="w-full h-full object-cover">
+          </div>
+          <div class="text-center w-full space-y-1">
+            <h4 id="view-modal-name" dir="auto" class="font-bold text-slate-100 text-lg">Student Name</h4>
+            <div id="view-modal-code" class="text-xs text-brand-400 font-mono font-semibold">CODE: ---</div>
+            <div id="view-modal-grade" dir="auto" class="text-xs text-slate-300">Grade: --- | Class: ---</div>
+            <div id="view-modal-language" class="text-xs text-slate-400">Language: ---</div>
+            <p id="view-modal-filename" dir="auto" class="text-[11px] text-slate-500 font-mono mt-2 break-all">Filename: ---</p>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-slate-800 bg-slate-900/80 flex items-center gap-2">
+          <button id="btn-view-download" class="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-download"></i> Download Photo
+          </button>
+          <button id="btn-view-delete-photo" class="py-2.5 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 text-xs font-semibold transition flex items-center justify-center gap-1.5" title="Delete current photo to retake">
+            <i class="fa-solid fa-trash-can"></i> Delete Photo
+          </button>
+          <button id="btn-view-retake" class="flex-1 py-2.5 px-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold shadow-lg shadow-brand-600/20 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-camera"></i> Retake Photo
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- MODAL 2: SETTINGS & CLOUD SYNC PANEL -->
     <div id="modal-settings" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
       <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
@@ -592,20 +690,6 @@
             <div>
               <label class="block font-semibold text-slate-300 mb-1">Firebase Credentials JSON</label>
               <textarea id="setting-firebase-json" rows="3" placeholder='{"apiKey": "AIzaSy...", "authDomain": "...", "projectId": "...", "storageBucket": "..."}' class="w-full p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 font-mono text-[10px] focus:outline-none focus:border-brand-500"></textarea>
-            </div>
-
-            <!-- Firebase Setup Requirements Helper Box -->
-            <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-800/80 text-[11px] text-slate-300 space-y-1.5">
-              <div class="font-bold text-amber-400 flex items-center gap-1.5">
-                <i class="fa-solid fa-triangle-exclamation"></i> Required Firebase Console Setup Checklist:
-              </div>
-              <ol class="list-decimal list-inside space-y-1 text-slate-400 text-[10px]">
-                <li><strong class="text-slate-200">Cloud Firestore:</strong> Go to Firebase Console &gt; <em>Build</em> &gt; <em>Firestore Database</em> &gt; Click <strong>Create Database</strong>.</li>
-                <li><strong class="text-slate-200">Database Rules:</strong> In Firestore &gt; <em>Rules</em> tab, set:<br>
-                  <code class="text-emerald-400 bg-slate-950 px-1 py-0.5 rounded font-mono">allow read, write: if true;</code>
-                </li>
-                <li><strong class="text-slate-200">Anonymous Auth:</strong> In <em>Authentication</em> &gt; <em>Sign-in method</em> &gt; Enable <strong>Anonymous</strong>.</li>
-              </ol>
             </div>
 
             <div class="flex justify-between items-center pt-1">
@@ -655,7 +739,7 @@
               <div class="font-semibold text-slate-300">Flip Captured Photo Horizontally</div>
               <div class="text-[11px] text-slate-500">Automatically mirrors/flips the photo horizontally after taking</div>
             </div>
-            <input type="checkbox" id="setting-flip-captured" checked class="w-4 h-4 accent-brand-500 rounded">
+            <input type="checkbox" id="setting-flip-captured" class="w-4 h-4 accent-brand-500 rounded">
           </div>
         </div>
 
@@ -786,17 +870,46 @@
               <li>Your app will be live at <code class="text-slate-200">https://yourusername.github.io/student-photo-app/</code>.</li>
             </ol>
           </div>
+        </div>
+      </div>
+    </div>
 
-          <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2">
-            <h4 class="font-bold text-emerald-400 text-sm">2. Enabling Multi-Laptop Real-time Cloud Sync</h4>
-            <p class="text-slate-400 leading-relaxed">By default, GitHub Pages hosts static files and saves edits to that single browser's <code class="text-slate-200">localStorage</code>. To sync data live across all laptops:</p>
-            <ol class="list-decimal list-inside space-y-1.5 text-slate-400">
-              <li>Open <a href="https://console.firebase.google.com/" target="_blank" class="text-brand-400 underline">Firebase Console</a> and click <strong>Add Project</strong>.</li>
-              <li>Create a free <strong>Firestore Database</strong> in test mode.</li>
-              <li>Go to <strong>Project Settings</strong> &rarr; <strong>Add Web App</strong>, and copy the Firebase config object.</li>
-              <li>Click the <i class="fa-solid fa-sliders text-brand-400"></i> Settings icon in this app, paste the JSON config into <strong>Real-time Firebase Cloud Sync</strong>, and click <strong>Save & Connect</strong>.</li>
-            </ol>
-          </div>
+    <!-- MODAL 6: CONFIRM DELETE STUDENT MODAL -->
+    <div id="modal-delete-confirm" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl flex flex-col p-5 text-center">
+        <div class="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center text-xl mx-auto mb-3">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+        <h3 class="font-bold text-slate-100 text-base mb-1">Delete Student?</h3>
+        <p class="text-xs text-slate-400 mb-4 leading-relaxed">Are you sure you want to delete <span id="delete-student-name" class="font-bold text-slate-200"></span>? This will remove the student record and photo from both local storage and cloud database.</p>
+        
+        <div class="flex items-center justify-center gap-3">
+          <button id="btn-cancel-delete" class="flex-1 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition">
+            Cancel
+          </button>
+          <button id="btn-confirm-delete" class="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 transition">
+            Yes, Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL 7: CONFIRM CLEAR ALL DATA MODAL -->
+    <div id="modal-clear-confirm" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl flex flex-col p-5 text-center">
+        <div class="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center text-xl mx-auto mb-3">
+          <i class="fa-solid fa-trash-can"></i>
+        </div>
+        <h3 class="font-bold text-slate-100 text-base mb-1">Clear Entire Roster?</h3>
+        <p class="text-xs text-slate-400 mb-4 leading-relaxed">This action will clear all student data from the active roster. Are you sure you want to proceed?</p>
+        
+        <div class="flex items-center justify-center gap-3">
+          <button id="btn-cancel-clear" class="flex-1 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition">
+            Cancel
+          </button>
+          <button id="btn-confirm-clear" class="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 transition">
+            Clear All Data
+          </button>
         </div>
       </div>
     </div>
@@ -805,142 +918,272 @@
     <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
   </div>
 
+  <!-- MAIN APPLICATION JAVASCRIPT LOGIC -->
   <script>
-    const DEFAULT_STUDENTS = [
-      { id: "STD101", code: "S1001", name: "ڕێبین ئەحمەد", grade: "پۆلی 10", classSection: "10-A", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD102", code: "S1002", name: "شێنێ بڕوا", grade: "پۆلی 10", classSection: "10-B", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD103", code: "S1003", name: "Alexander Wright", grade: "Grade 11", classSection: "11-A", language: "English", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD104", code: "S1004", name: "ئالان پشتیوان", grade: "پۆلی 11", classSection: "11-C", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null },
-      { id: "STD105", code: "S1005", name: "ژینۆ هۆشیار", grade: "پۆلی 9", classSection: "9-A", language: "Kurdish", status: "Pending", photoFilename: "", photoData: null }
-    ];
-
-    const DEFAULT_ADMIN = { id: "usr_admin", name: "System Admin", email: "admin@school.edu", role: "Admin" };
-
+    // Global Application State Object
     let state = {
-      students: [],
-      users: [DEFAULT_ADMIN],
-      currentUser: null,
-      isLoggedIn: false,
-      activeStudentId: null,
-      capturedTempData: null,
-      videoStream: null,
-      isMirrored: true,
-      settings: { format: "image/jpeg", quality: 0.90, resolution: "1200x1500", autocenter: true, flipCaptured: true },
-      filters: { search: "", grade: "ALL", classSection: "ALL", language: "ALL", status: "ALL" }
+      students: [
+        { id: 'S1001', code: 'S1001', name: 'ڕێبین ئەحمەد', grade: 'Grade 10', class: '10-A', language: 'Kurdish', status: 'Pending', photo: null },
+        { id: 'S1002', code: 'S1002', name: 'لەنیا کامەران', grade: 'Grade 10', class: '10-A', language: 'Kurdish', status: 'Pending', photo: null },
+        { id: 'S1003', code: 'S1003', name: 'Alexander Wright', grade: 'Grade 11', class: '11-B', language: 'English', status: 'Pending', photo: null },
+        { id: 'S1004', code: 'S1004', name: 'سارە عومەر', grade: 'Grade 11', class: '11-B', language: 'Kurdish', status: 'Pending', photo: null },
+        { id: 'S1005', code: 'S1005', name: 'Youssef Mansour', grade: 'Grade 12', class: '12-C', language: 'Arabic', status: 'Pending', photo: null }
+      ],
+      selectedStudentId: null,
+      activeCameraDeviceId: '',
+      mirrorCamera: false,
+      pendingPhotoDataUrl: null,
+      settings: {
+        format: 'image/jpeg',
+        quality: 0.90,
+        resolution: '1200x1500',
+        flipCaptured: false
+      },
+      users: [
+        { id: 'u1', name: 'System Admin', email: 'admin@school.edu', role: 'Admin' },
+        { id: 'u2', name: 'Lead Photographer', email: 'photo@school.edu', role: 'Photographer' }
+      ],
+      filters: {
+        search: '',
+        grade: 'ALL',
+        class: 'ALL',
+        language: 'ALL',
+        status: 'ALL'
+      }
     };
+
+    let activeStream = null;
+    let studentToDeleteId = null;
+    let faceDetectorInstance = null;
+    let detectedFaceBox = null; // { x, y, width, height } in relative coords (0..1)
+
+    function initFaceDetectionAI() {
+      try {
+        if (typeof FaceDetection !== 'undefined') {
+          faceDetectorInstance = new FaceDetection({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+          });
+          faceDetectorInstance.setOptions({
+            model: 'short',
+            minDetectionConfidence: 0.5
+          });
+          faceDetectorInstance.onResults(onFaceDetectionResults);
+          console.log("MediaPipe Face Detection AI initialized.");
+        }
+      } catch (e) {
+        console.warn("Face Detection AI failed to initialize:", e);
+      }
+    }
+
+    function onFaceDetectionResults(results) {
+      const faceCanvas = document.getElementById('face-canvas');
+      const faceBadge = document.getElementById('face-lock-badge');
+      if (!faceCanvas) return;
+
+      const ctx = faceCanvas.getContext('2d');
+      ctx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
+
+      if (results.detections && results.detections.length > 0) {
+        const detection = results.detections[0];
+        const bbox = detection.boundingBox;
+        
+        detectedFaceBox = {
+          x: bbox.xCenter - bbox.width / 2,
+          y: bbox.yCenter - bbox.height / 2,
+          width: bbox.width,
+          height: bbox.height,
+          xCenter: bbox.xCenter,
+          yCenter: bbox.yCenter
+        };
+
+        if (faceBadge) faceBadge.classList.remove('opacity-0');
+
+        // Draw animated face bounding reticle on video overlay canvas
+        const w = faceCanvas.width;
+        const h = faceCanvas.height;
+        const fx = detectedFaceBox.x * w;
+        const fy = detectedFaceBox.y * h;
+        const fw = detectedFaceBox.width * w;
+        const fh = detectedFaceBox.height * h;
+
+        ctx.strokeStyle = '#0ea5e9';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(fx, fy, fw, fh);
+
+        // Corner accents
+        const cornerLen = 12;
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        // Top Left
+        ctx.moveTo(fx, fy + cornerLen); ctx.lineTo(fx, fy); ctx.lineTo(fx + cornerLen, fy);
+        // Top Right
+        ctx.moveTo(fx + fw - cornerLen, fy); ctx.lineTo(fx + fw, fy); ctx.lineTo(fx + fw, fy + cornerLen);
+        // Bottom Left
+        ctx.moveTo(fx, fy + fh - cornerLen); ctx.lineTo(fx, fy + fh); ctx.lineTo(fx + cornerLen, fy + fh);
+        // Bottom Right
+        ctx.moveTo(fx + fw - cornerLen, fy + fh); ctx.lineTo(fx + fw, fy + fh); ctx.lineTo(fx + fw, fy + fh - cornerLen);
+        ctx.stroke();
+
+      } else {
+        detectedFaceBox = null;
+        if (faceBadge) faceBadge.classList.add('opacity-0');
+      }
+    }
+
+    function deleteStudentPhoto(id) {
+      const student = state.students.find(s => s.id === id);
+      if (!student || !student.photo) return;
+
+      student.photo = null;
+      student.status = 'Pending';
+      student.photoFilename = null;
+
+      saveState();
+
+      if (window.saveStudentToCloud) {
+        window.saveStudentToCloud(student);
+      }
+
+      renderStudentTable();
+      if (state.selectedStudentId === id) {
+        selectStudent(id);
+      }
+
+      const viewModal = document.getElementById('modal-view-photo');
+      if (viewModal) viewModal.classList.add('hidden');
+
+      showToast(`Photo deleted for ${student.name}. Ready for retake.`, "info");
+    }
+
+    function deleteActiveStudentPhoto() {
+      if (state.selectedStudentId) {
+        deleteStudentPhoto(state.selectedStudentId);
+      }
+    }
 
     function loadPersistedState() {
       try {
-        const stored = localStorage.getItem('eduphoto_state');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed.students && Array.isArray(parsed.students) && parsed.students.length > 0) state.students = parsed.students;
-          if (parsed.users && Array.isArray(parsed.users) && parsed.users.length > 0) state.users = parsed.users;
-          if (parsed.settings) state.settings = parsed.settings;
+        const saved = localStorage.getItem('eduphoto_app_state_v2.5');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.students && Array.isArray(parsed.students)) {
+            state.students = parsed.students;
+
+            // Sanitize and optimize any oversized photos that were causing Firestore upload failures
+            state.students.forEach(async (s) => {
+              if (s.photo && s.photo.length > 850000) {
+                s.photo = await window.optimizePhotoForCloud(s.photo);
+                saveState();
+              }
+            });
+          }
+          if (parsed.settings) {
+            state.settings = { ...state.settings, ...parsed.settings };
+          }
+          if (parsed.users && Array.isArray(parsed.users)) {
+            state.users = parsed.users;
+          }
         }
       } catch (e) {
-        console.warn("LocalStorage read error, resetting defaults", e);
+        console.warn("Could not load persisted state from localStorage:", e);
       }
 
-      if (!state.users || state.users.length === 0 || !state.users.some(u => u.role === 'Admin')) {
-        state.users = [DEFAULT_ADMIN, ...(state.users || [])];
-      }
+      // Restore form inputs in Settings modal to match loaded state
+      try {
+        const fmt = document.getElementById('setting-format');
+        if (fmt && state.settings.format) fmt.value = state.settings.format;
 
-      if (!state.students || state.students.length === 0) {
-        state.students = JSON.parse(JSON.stringify(DEFAULT_STUDENTS));
+        const qual = document.getElementById('setting-quality');
+        const qualDisp = document.getElementById('quality-val-display');
+        if (qual && state.settings.quality) {
+          qual.value = state.settings.quality;
+          if (qualDisp) qualDisp.textContent = parseFloat(state.settings.quality).toFixed(2);
+        }
+
+        const res = document.getElementById('setting-resolution');
+        if (res && state.settings.resolution) res.value = state.settings.resolution;
+
+        const flip = document.getElementById('setting-flip-captured');
+        if (flip && typeof state.settings.flipCaptured !== 'undefined') {
+          flip.checked = state.settings.flipCaptured;
+        }
+
+        const storedFirebase = window.getFirebaseConfig ? window.getFirebaseConfig() : null;
+        const fbJsonEl = document.getElementById('setting-firebase-json');
+        const cloudStatusEl = document.getElementById('settings-cloud-status');
+        if (storedFirebase && fbJsonEl) {
+          fbJsonEl.value = JSON.stringify(storedFirebase, null, 2);
+          if (cloudStatusEl) {
+            cloudStatusEl.textContent = "Configured";
+            cloudStatusEl.className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-500/20 text-emerald-300";
+          }
+        }
+      } catch (uiErr) {
+        console.warn("Error restoring settings UI:", uiErr);
       }
     }
 
     function saveState() {
       try {
-        localStorage.setItem('eduphoto_state', JSON.stringify({
+        localStorage.setItem('eduphoto_app_state_v2.5', JSON.stringify({
           students: state.students,
-          users: state.users,
-          settings: state.settings
+          settings: state.settings,
+          users: state.users
         }));
       } catch (e) {
-        console.warn("LocalStorage save error", e);
+        console.warn("Could not save state to localStorage:", e);
+      }
+      if (window.saveAllStudentsToCloud && state.students) {
+        window.saveAllStudentsToCloud(state.students);
       }
     }
 
-    function sanitizeFilenamePart(str) {
-      if (!str) return '';
-      return String(str)
-        .trim()
-        .replace(/[\\/:*?"<>|\r\n\t\0]/g, '')
-        .replace(/\s+/g, '_');
-    }
+    function updateStats() {
+      const total = state.students.length;
+      const pending = state.students.filter(s => !s.photo || s.status === 'Pending').length;
+      const captured = state.students.filter(s => s.photo || s.status === 'Captured' || s.status === 'Approved').length;
 
-    function generateStudentPhotoFilename(student, format = 'image/jpeg') {
-      const ext = format === 'image/png' ? 'png' : format === 'image/webp' ? 'webp' : 'jpg';
-      const code = sanitizeFilenamePart(student.code);
-      const name = sanitizeFilenamePart(student.name);
-      const grade = sanitizeFilenamePart(student.grade);
-      const cls = sanitizeFilenamePart(student.classSection);
-      const lang = sanitizeFilenamePart(student.language);
-      return `${code}_${name}_${grade}_${cls}_${lang}.${ext}`;
-    }
-
-    function populateLoginUsersDropdown() {
-      const select = document.getElementById('login-user-select');
-      if (!select) return;
-      select.innerHTML = '';
-
-      state.users.forEach(u => {
-        const opt = document.createElement('option');
-        opt.value = u.id;
-        opt.textContent = `${u.name} (${u.role})`;
-        if (u.role === 'Admin') opt.selected = true;
-        select.appendChild(opt);
-      });
-    }
-
-    function handleLogin(userId) {
-      const user = state.users.find(u => u.id === userId) || state.users[0];
-      state.currentUser = user;
-      state.isLoggedIn = true;
-
-      const roleBadge = document.getElementById('current-user-role');
-      if (roleBadge) roleBadge.textContent = `${user.name} (${user.role})`;
-      
-      const authOverlay = document.getElementById('auth-overlay');
-      if (authOverlay) authOverlay.classList.add('hidden');
-
-      const adminBtn = document.getElementById('btn-admin-panel');
-      if (adminBtn) {
-        if (user.role === 'Admin') {
-          adminBtn.classList.remove('hidden');
-        } else {
-          adminBtn.classList.add('hidden');
-        }
-      }
-
-      showToast(`Welcome back, ${user.name}!`, "success");
-      initCameraDevices();
+      document.getElementById('stat-total').textContent = total;
+      document.getElementById('stat-pending').textContent = pending;
+      document.getElementById('stat-captured').textContent = captured;
     }
 
     function renderFilters() {
-      const grades = ['ALL', ...new Set(state.students.map(s => s.grade || '').filter(Boolean))];
-      const classes = ['ALL', ...new Set(state.students.map(s => s.classSection || '').filter(Boolean))];
-      const languages = ['ALL', ...new Set(state.students.map(s => s.language || '').filter(Boolean))];
+      const grades = new Set();
+      const classes = new Set();
+      const languages = new Set();
 
-      populateDropdown('filter-grade', grades, 'All Grades');
-      populateDropdown('filter-class', classes, 'All Classes');
-      populateDropdown('filter-language', languages, 'All Languages');
-    }
-
-    function populateDropdown(elemId, items, defaultText) {
-      const elem = document.getElementById(elemId);
-      if (!elem) return;
-      const currentVal = elem.value || 'ALL';
-      elem.innerHTML = '';
-      items.forEach(item => {
-        const opt = document.createElement('option');
-        opt.value = item;
-        opt.textContent = item === 'ALL' ? defaultText : item;
-        if (item === currentVal) opt.selected = true;
-        elem.appendChild(opt);
+      state.students.forEach(s => {
+        if (s.grade) grades.add(s.grade);
+        if (s.class) classes.add(s.class);
+        if (s.language) languages.add(s.language);
       });
+
+      const filterGrade = document.getElementById('filter-grade');
+      const filterClass = document.getElementById('filter-class');
+      const filterLanguage = document.getElementById('filter-language');
+
+      if (filterGrade) {
+        const curr = filterGrade.value;
+        filterGrade.innerHTML = '<option value="ALL">All Grades</option>' + 
+          Array.from(grades).map(g => `<option value="${g}">${g}</option>`).join('');
+        filterGrade.value = curr || 'ALL';
+      }
+
+      if (filterClass) {
+        const curr = filterClass.value;
+        filterClass.innerHTML = '<option value="ALL">All Classes</option>' + 
+          Array.from(classes).map(c => `<option value="${c}">${c}</option>`).join('');
+        filterClass.value = curr || 'ALL';
+      }
+
+      if (filterLanguage) {
+        const curr = filterLanguage.value;
+        filterLanguage.innerHTML = '<option value="ALL">All Languages</option>' + 
+          Array.from(languages).map(l => `<option value="${l}">${l}</option>`).join('');
+        filterLanguage.value = curr || 'ALL';
+      }
     }
 
     function renderStudentTable() {
@@ -948,522 +1191,686 @@
       const emptyState = document.getElementById('empty-state');
       if (!tbody) return;
 
-      let filtered = state.students.filter(s => {
-        const search = (state.filters.search || '').toLowerCase();
-        const sName = (s.name || '').toLowerCase();
-        const sCode = (s.code || '').toLowerCase();
-        
-        const matchesSearch = !search || sName.includes(search) || sCode.includes(search);
+      const filtered = state.students.filter(s => {
+        const matchesSearch = !state.filters.search || 
+          s.name?.toLowerCase().includes(state.filters.search.toLowerCase()) || 
+          s.code?.toLowerCase().includes(state.filters.search.toLowerCase());
         const matchesGrade = state.filters.grade === 'ALL' || s.grade === state.filters.grade;
-        const matchesClass = state.filters.classSection === 'ALL' || s.classSection === state.filters.classSection;
+        const matchesClass = state.filters.class === 'ALL' || s.class === state.filters.class;
         const matchesLang = state.filters.language === 'ALL' || s.language === state.filters.language;
-        const matchesStatus = state.filters.status === 'ALL' || s.status === state.filters.status;
+        const matchesStatus = state.filters.status === 'ALL' || 
+          (state.filters.status === 'Pending' && (!s.photo || s.status === 'Pending')) ||
+          (state.filters.status === 'Captured' && (s.photo || s.status === 'Captured' || s.status === 'Approved')) ||
+          s.status === state.filters.status;
 
         return matchesSearch && matchesGrade && matchesClass && matchesLang && matchesStatus;
       });
 
       document.getElementById('visible-count').textContent = filtered.length;
       document.getElementById('total-count').textContent = state.students.length;
-      document.getElementById('stat-total').textContent = state.students.length;
-      document.getElementById('stat-pending').textContent = state.students.filter(s => s.status === 'Pending').length;
-      document.getElementById('stat-captured').textContent = state.students.filter(s => s.status === 'Captured' || s.status === 'Approved').length;
 
       if (filtered.length === 0) {
         tbody.innerHTML = '';
         if (emptyState) emptyState.classList.remove('hidden');
+        updateStats();
         return;
       }
+
       if (emptyState) emptyState.classList.add('hidden');
 
       tbody.innerHTML = filtered.map(s => {
-        const isSelected = s.id === state.activeStudentId;
-        const avatarHtml = s.photoData 
-          ? `<img src="${s.photoData}" class="w-9 h-11 object-cover rounded-lg border border-slate-700 shadow">`
-          : `<div class="w-9 h-11 bg-slate-800 rounded-lg border border-slate-700 flex items-center justify-center text-slate-500 text-xs"><i class="fa-solid fa-user"></i></div>`;
-
-        let statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">Pending</span>';
-        if (s.status === 'Captured' || s.status === 'Approved') {
-          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Captured</span>';
-        }
+        const isSelected = s.id === state.selectedStudentId;
+        const statusColors = {
+          'Pending': 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+          'Captured': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+          'Approved': 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+          'Requires Retake': 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+        };
+        const statusBg = statusColors[s.status] || statusColors['Pending'];
 
         return `
-          <tr onclick="selectStudentRow('${s.id}')" class="cursor-pointer transition hover:bg-slate-800/80 ${isSelected ? 'bg-brand-900/30 border-l-4 border-l-brand-500' : ''}">
-            <td class="py-2.5 px-4">${avatarHtml}</td>
-            <td class="py-2.5 px-4 font-mono text-brand-400 font-semibold">${s.code || ''}</td>
-            <td class="py-2.5 px-4 font-medium text-slate-100" dir="auto">${s.name || ''}</td>
-            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.grade || ''}</td>
-            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.classSection || ''}</td>
-            <td class="py-2.5 px-4 text-slate-400" dir="auto">${s.language || ''}</td>
-            <td class="py-2.5 px-4">${statusBadge}</td>
-            <td class="py-2.5 px-4 text-right">
-              <button class="px-2.5 py-1 rounded-lg ${isSelected ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-300'} text-[11px] font-semibold">
-                ${isSelected ? '<i class="fa-solid fa-camera"></i> Active' : 'Select'}
-              </button>
+          <tr onclick="selectStudent('${s.id}')" class="cursor-pointer transition hover:bg-slate-800/80 ${isSelected ? 'bg-brand-500/10 border-l-4 border-l-brand-500' : ''}">
+            <td class="py-2.5 px-3 sm:px-4">
+              ${s.photo 
+                ? `<div onclick="event.stopPropagation(); viewStudentPhoto('${s.id}')" class="relative group cursor-pointer inline-block" title="Click to view full photo">
+                     <img src="${s.photo}" class="w-9 h-11 object-cover rounded-lg border border-slate-700 shadow-sm group-hover:border-brand-400 transition" alt="Student">
+                     <div class="absolute inset-0 bg-brand-500/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-[10px] transition"><i class="fa-solid fa-magnifying-glass"></i></div>
+                   </div>` 
+                : `<div class="w-9 h-11 bg-slate-800 rounded-lg border border-slate-700 flex items-center justify-center text-slate-500 text-xs"><i class="fa-solid fa-user"></i></div>`
+              }
+            </td>
+            <td class="py-2.5 px-3 sm:px-4 font-mono text-brand-400 font-semibold">${s.code || '---'}</td>
+            <td class="py-2.5 px-3 sm:px-4 font-semibold text-slate-100" dir="auto">${s.name || '---'}</td>
+            <td class="py-2.5 px-3 sm:px-4 text-slate-300" dir="auto">${s.grade || '---'}</td>
+            <td class="py-2.5 px-3 sm:px-4 text-slate-300" dir="auto">${s.class || '---'}</td>
+            <td class="py-2.5 px-3 sm:px-4 text-slate-300">${s.language || '---'}</td>
+            <td class="py-2.5 px-3 sm:px-4">
+              <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold border ${statusBg}">
+                ${s.photo ? 'Captured' : (s.status || 'Pending')}
+              </span>
+            </td>
+            <td class="py-2.5 px-3 sm:px-4 text-right">
+              <div class="flex items-center justify-end gap-1.5">
+                ${s.photo ? `
+                  <button onclick="event.stopPropagation(); viewStudentPhoto('${s.id}')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-brand-400 transition text-xs" title="View Full Photo">
+                    <i class="fa-solid fa-eye"></i>
+                  </button>
+                ` : ''}
+                <button onclick="event.stopPropagation(); selectStudent('${s.id}')" class="px-2.5 py-1 rounded-lg ${isSelected ? 'bg-brand-600 text-white' : 'bg-brand-600/20 text-brand-300 hover:bg-brand-600 hover:text-white'} transition text-xs font-medium">
+                  ${isSelected ? '<i class="fa-solid fa-camera"></i> Active' : 'Select'}
+                </button>
+                <button onclick="event.stopPropagation(); promptDeleteStudent('${s.id}')" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white transition text-xs" title="Delete Student">
+                  <i class="fa-solid fa-trash-can"></i>
+                </button>
+              </div>
             </td>
           </tr>
         `;
       }).join('');
+
+      updateStats();
     }
 
-    function selectStudentRow(id) {
-      state.activeStudentId = id;
+    function viewStudentPhoto(id) {
       const student = state.students.find(s => s.id === id);
-      if (!student) return;
-
-      document.getElementById('active-student-name').textContent = student.name || 'Student';
-      document.getElementById('active-student-code').textContent = `Code: ${student.code || '---'}`;
-      document.getElementById('active-student-grade').textContent = `Grade: ${student.grade || '---'}`;
-      document.getElementById('active-student-status').textContent = student.status || 'Pending';
-      
-      const snapBtn = document.getElementById('btn-snap-photo');
-      if (snapBtn) snapBtn.disabled = false;
-
-      renderStudentTable();
-
-      if (window.innerWidth < 768) {
-        switchMobileTab('studio');
-      }
-    }
-
-    function switchMobileTab(tab) {
-      const panelStudio = document.getElementById('panel-studio');
-      const panelRoster = document.getElementById('panel-roster');
-      const panelSidebar = document.getElementById('panel-sidebar');
-
-      const tabStudio = document.getElementById('tab-studio');
-      const tabRoster = document.getElementById('tab-roster');
-      const tabActions = document.getElementById('tab-actions');
-
-      [tabStudio, tabRoster, tabActions].forEach(t => {
-        if (t) {
-          t.classList.remove('text-brand-400', 'border-brand-500');
-          t.classList.add('text-slate-400', 'border-transparent');
-        }
-      });
-
-      if (tab === 'studio') {
-        panelStudio?.classList.remove('hidden');
-        panelRoster?.classList.add('hidden');
-        panelSidebar?.classList.add('hidden');
-        tabStudio?.classList.add('text-brand-400', 'border-brand-500');
-        tabStudio?.classList.remove('text-slate-400', 'border-transparent');
-      } else if (tab === 'roster') {
-        panelStudio?.classList.add('hidden');
-        panelRoster?.classList.remove('hidden');
-        panelSidebar?.classList.add('hidden');
-        tabRoster?.classList.add('text-brand-400', 'border-brand-500');
-        tabRoster?.classList.remove('text-slate-400', 'border-transparent');
-      } else if (tab === 'actions') {
-        panelStudio?.classList.add('hidden');
-        panelRoster?.classList.add('hidden');
-        panelSidebar?.classList.remove('hidden');
-        tabActions?.classList.add('text-brand-400', 'border-brand-500');
-        tabActions?.classList.remove('text-slate-400', 'border-transparent');
-      }
-    }
-
-    function saveCapturedPhoto() {
-      if (!state.capturedTempData || !state.activeStudentId) return;
-
-      const student = state.students.find(s => s.id === state.activeStudentId);
-      if (student) {
-        student.photoData = state.capturedTempData.dataUrl;
-        student.photoFilename = state.capturedTempData.filename;
-        student.status = 'Captured';
-
-        saveState();
-        if (window.saveStudentToCloud) {
-          window.saveStudentToCloud(student);
-        }
-
-        renderStudentTable();
-        selectStudentRow(student.id);
-
-        document.getElementById('modal-preview').classList.add('hidden');
-        showToast(`Photo saved for ${student.name} & synced across devices!`, "success");
-      }
-    }
-
-    function handleAddManualStudent(e) {
-      e.preventDefault();
-      const codeInput = document.getElementById('manual-student-code').value.trim();
-      const nameInput = document.getElementById('manual-student-name').value.trim();
-      const gradeInput = document.getElementById('manual-student-grade').value.trim();
-      const classInput = document.getElementById('manual-student-class').value.trim();
-      const langInput = document.getElementById('manual-student-language').value;
-
-      if (!nameInput) {
-        showToast("Please enter student name", "warning");
+      if (!student || !student.photo) {
+        showToast("No photo available for this student", "warning");
         return;
       }
 
-      const generatedCode = codeInput || `S${1000 + state.students.length + 1}`;
-      const newStudent = {
-        id: `STD_${Date.now()}`,
-        code: generatedCode,
-        name: nameInput,
-        grade: gradeInput || "Grade 10",
-        classSection: classInput || "10-A",
-        language: langInput || "Kurdish",
-        status: "Pending",
-        photoFilename: "",
-        photoData: null
-      };
+      document.getElementById('view-modal-img').src = student.photo;
+      document.getElementById('view-modal-name').textContent = student.name || '---';
+      document.getElementById('view-modal-code').textContent = `CODE: ${student.code || '---'}`;
+      document.getElementById('view-modal-grade').textContent = `Grade: ${student.grade || '---'} | Class: ${student.class || '---'}`;
+      document.getElementById('view-modal-language').textContent = `Language: ${student.language || '---'}`;
+      document.getElementById('view-modal-filename').textContent = `Filename: ${generateStudentPhotoFilename(student)}`;
 
-      state.students.unshift(newStudent);
+      const retakeBtn = document.getElementById('btn-view-retake');
+      if (retakeBtn) {
+        retakeBtn.onclick = function() {
+          document.getElementById('modal-view-photo').classList.add('hidden');
+          selectStudent(student.id);
+        };
+      }
+
+      const deleteBtn = document.getElementById('btn-view-delete-photo');
+      if (deleteBtn) {
+        deleteBtn.onclick = function() {
+          deleteStudentPhoto(student.id);
+        };
+      }
+
+      const downloadBtn = document.getElementById('btn-view-download');
+      if (downloadBtn) {
+        downloadBtn.onclick = function() {
+          const a = document.createElement('a');
+          a.href = student.photo;
+          a.download = generateStudentPhotoFilename(student);
+          a.click();
+        };
+      }
+
+      const modal = document.getElementById('modal-view-photo');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function promptDeleteStudent(id) {
+      const student = state.students.find(s => s.id === id);
+      if (!student) return;
+      studentToDeleteId = id;
+
+      const nameEl = document.getElementById('delete-student-name');
+      if (nameEl) nameEl.textContent = student.name || student.code || 'this student';
+
+      const modal = document.getElementById('modal-delete-confirm');
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function confirmDeleteStudent() {
+      if (!studentToDeleteId) return;
+      const id = studentToDeleteId;
+      const student = state.students.find(s => s.id === id);
+      const name = student ? student.name : 'Student';
+
+      state.students = state.students.filter(s => s.id !== id);
+
+      if (state.selectedStudentId === id) {
+        state.selectedStudentId = null;
+        document.getElementById('active-student-name').textContent = 'Select a student';
+        document.getElementById('active-student-code').textContent = 'Code: ---';
+        document.getElementById('active-student-grade').textContent = 'Grade: ---';
+        
+        const snapBtn = document.getElementById('btn-snap-photo');
+        const nativeBtn = document.getElementById('btn-native-shutter');
+        if (snapBtn) snapBtn.disabled = true;
+        if (nativeBtn) nativeBtn.disabled = true;
+      }
+
       saveState();
 
-      if (window.saveStudentToCloud) {
-        window.saveStudentToCloud(newStudent);
+      if (window.deleteStudentFromCloud) {
+        window.deleteStudentFromCloud(id);
       }
 
       renderFilters();
       renderStudentTable();
-      selectStudentRow(newStudent.id);
 
-      document.getElementById('modal-add-student').classList.add('hidden');
-      document.getElementById('form-add-student').reset();
-      showToast(`Student ${nameInput} added and synced!`, "success");
+      const modal = document.getElementById('modal-delete-confirm');
+      if (modal) modal.classList.add('hidden');
+      studentToDeleteId = null;
+
+      showToast(`Deleted student ${name} permanently.`, "info");
     }
 
-    function startFaceTrackingAnimation() {
-      const badge = document.getElementById('face-lock-badge');
-      if (badge) badge.classList.remove('opacity-0');
+    function selectStudent(id) {
+      state.selectedStudentId = id;
+      const student = state.students.find(s => s.id === id);
+
+      if (student) {
+        document.getElementById('active-student-name').textContent = student.name;
+        document.getElementById('active-student-code').textContent = `Code: ${student.code}`;
+        document.getElementById('active-student-grade').textContent = `Grade: ${student.grade}`;
+        
+        const statusBadge = document.getElementById('active-student-status');
+        if (statusBadge) {
+          statusBadge.textContent = student.photo ? 'Captured' : (student.status || 'Pending');
+          statusBadge.className = `px-2 py-0.5 rounded text-[10px] font-semibold ${student.photo ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`;
+        }
+
+        const deleteActiveBtn = document.getElementById('btn-active-delete-photo');
+        if (deleteActiveBtn) {
+          if (student.photo) {
+            deleteActiveBtn.classList.remove('hidden');
+          } else {
+            deleteActiveBtn.classList.add('hidden');
+          }
+        }
+
+        const snapBtn = document.getElementById('btn-snap-photo');
+        const nativeBtn = document.getElementById('btn-native-shutter');
+        if (snapBtn) snapBtn.disabled = false;
+        if (nativeBtn) nativeBtn.disabled = false;
+
+        // On mobile, auto switch tab to Studio
+        if (window.innerWidth < 768) {
+          switchMobileTab('studio');
+        }
+      }
+
+      renderStudentTable();
     }
 
     async function initCameraDevices() {
-      const cameraSelect = document.getElementById('camera-select');
-      const cameraStatus = document.getElementById('camera-status-indicator');
-      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-        if (cameraStatus) {
-          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Camera Unsupported';
-          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
-        }
-        return;
-      }
+      const select = document.getElementById('camera-select');
+      if (!select) return;
 
       try {
-        let devices = await navigator.mediaDevices.enumerateDevices();
-        let videoDevices = devices.filter(d => d.kind === 'videoinput');
-        const hasLabels = videoDevices.some(d => d.label !== '');
-
-        let initialStream = null;
-        if (!hasLabels) {
-          try {
-            initialStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            devices = await navigator.mediaDevices.enumerateDevices();
-            videoDevices = devices.filter(d => d.kind === 'videoinput');
-          } catch (e) {
-            console.warn('Initial camera probe permission warning:', e);
-          }
-        }
-
-        if (cameraSelect) {
-          cameraSelect.innerHTML = '';
-          if (videoDevices.length === 0) {
-            cameraSelect.innerHTML = '<option value="">No Camera Detected</option>';
-          } else {
-            videoDevices.forEach((device, index) => {
-              const opt = document.createElement('option');
-              opt.value = device.deviceId;
-              opt.textContent = device.label || `Camera ${index + 1}`;
-              cameraSelect.appendChild(opt);
-            });
-          }
-        }
-
-        if (initialStream) {
-          initialStream.getTracks().forEach(track => track.stop());
-          await new Promise(r => setTimeout(r, 300));
-        }
-
-        if (videoDevices.length > 0) {
-          await startCameraStream(videoDevices[0].deviceId);
-        }
-      } catch (err) {
-        console.error('Camera access error:', err);
-        if (cameraStatus) {
-          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Access Denied / In Use';
-          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
-        }
-        showToast('Camera in use or permission denied. Close other apps & click reconnect.', 'error');
-      }
-    }
-
-    async function startCameraStream(deviceId, retries = 2) {
-      const video = document.getElementById('webcam-video');
-      const cameraStatus = document.getElementById('camera-status-indicator');
-      if (!video) return;
-
-      if (state.videoStream) {
-        state.videoStream.getTracks().forEach(track => track.stop());
-        state.videoStream = null;
-        await new Promise(r => setTimeout(r, 200));
-      }
-
-      const constraints = {
-        video: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          width: { ideal: 3840, max: 3840 },
-          height: { ideal: 2160, max: 2160 },
-          frameRate: { ideal: 30, max: 60 }
-        }
-      };
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        state.videoStream = stream;
-        video.srcObject = stream;
-        if (cameraStatus) {
-          cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Camera Ready';
-          cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20';
-        }
-        startFaceTrackingAnimation();
-      } catch (err) {
-        console.warn('Camera stream request failed:', err);
-        if (retries > 0) {
-          await new Promise(r => setTimeout(r, 400));
-          return startCameraStream(retries === 1 ? null : deviceId, retries - 1);
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          showToast("Camera API not supported or running in non-secure context", "warning");
+          return;
         }
 
         try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          state.videoStream = fallbackStream;
-          video.srcObject = fallbackStream;
-          if (cameraStatus) {
-            cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Active (Standard)';
-            cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20';
-          }
-          startFaceTrackingAnimation();
-        } catch (e) {
-          if (cameraStatus) {
-            cameraStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Device in Use';
-            cameraStatus.className = 'flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20';
-          }
-          showToast('Camera is busy/in use by another program or tab. Close it and click reconnect.', 'error');
+          const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          tempStream.getTracks().forEach(t => t.stop());
+        } catch (pErr) {}
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        select.innerHTML = videoDevices.length === 0 
+          ? '<option value="">No cameras detected</option>'
+          : videoDevices.map((d, idx) => `<option value="${d.deviceId}">${d.label || `Camera ${idx + 1}`}</option>`).join('');
+
+        if (videoDevices.length > 0) {
+          state.activeCameraDeviceId = videoDevices[0].deviceId;
+          await startCameraStream(state.activeCameraDeviceId);
         }
+      } catch (err) {
+        console.warn("Camera enumeration error:", err);
+        showToast("Camera access warning: " + err.message, "warning");
+      }
+    }
+
+    async function startCameraStream(deviceId) {
+      const video = document.getElementById('webcam-video');
+      const faceCanvas = document.getElementById('face-canvas');
+      const statusIndicator = document.getElementById('camera-status-indicator');
+
+      if (activeStream) {
+        activeStream.getTracks().forEach(t => t.stop());
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      try {
+        const constraints = {
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 3840, max: 3840 },
+            height: { ideal: 2160, max: 2160 }
+          }
+        };
+
+        activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (video) {
+          video.srcObject = activeStream;
+          await video.play();
+
+          if (faceCanvas) {
+            faceCanvas.width = video.videoWidth || 1280;
+            faceCanvas.height = video.videoHeight || 720;
+          }
+
+          // Continuous Frame Loop for MediaPipe Face Detection
+          async function processFrameLoop() {
+            if (video && !video.paused && !video.ended && faceDetectorInstance) {
+              try {
+                await faceDetectorInstance.send({ image: video });
+              } catch (e) {}
+              requestAnimationFrame(processFrameLoop);
+            }
+          }
+          processFrameLoop();
+        }
+
+        if (statusIndicator) {
+          statusIndicator.className = "flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20";
+          statusIndicator.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Live AI Stream Ready';
+        }
+
+      } catch (err) {
+        console.warn("Camera stream error:", err);
+        if (statusIndicator) {
+          statusIndicator.className = "flex items-center gap-1.5 text-[11px] font-medium text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20";
+          statusIndicator.innerHTML = '<span class="w-2 h-2 rounded-full bg-rose-400"></span> Camera Off / Blocked';
+        }
+        showToast("Could not access camera device: " + err.message, "error");
       }
     }
 
     function snapPhoto() {
-      if (!state.activeStudentId) {
-        showToast('Please select a student from the roster first', 'warning');
-        return;
-      }
-
       const video = document.getElementById('webcam-video');
-      const cropCanvas = document.getElementById('crop-canvas');
-      if (!video || !video.videoWidth) {
-        showToast('Camera feed is not active', 'error');
+      if (!video || !activeStream) {
+        showToast("No active camera stream available", "error");
         return;
       }
 
-      const student = state.students.find(s => s.id === state.activeStudentId);
-      if (!student) return;
+      const canvas = document.getElementById('crop-canvas');
+      const ctx = canvas.getContext('2d');
 
-      const [resW, resH] = state.settings.resolution.split('x').map(Number);
-      cropCanvas.width = resW;
-      cropCanvas.height = resH;
+      const [resW, resH] = (state.settings.resolution || '1200x1500').split('x').map(Number);
+      canvas.width = resW || 1200;
+      canvas.height = resH || 1500;
 
-      const ctx = cropCanvas.getContext('2d');
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      const vW = video.videoWidth || 1280;
+      const vH = video.videoHeight || 720;
 
-      const vW = video.videoWidth;
-      const vH = video.videoHeight;
+      const targetAspect = 4 / 5;
+      let cropW, cropH, cropX, cropY;
 
-      const targetAspect = resW / resH;
-      let cropWidth, cropHeight, offsetX, offsetY;
+      // Smart AI Face Centering Math
+      if (detectedFaceBox) {
+        const faceCx = detectedFaceBox.xCenter * vW;
+        const faceCy = detectedFaceBox.yCenter * vH;
+        const faceH = detectedFaceBox.height * vH;
 
-      if (vW / vH > targetAspect) {
-        cropHeight = vH;
-        cropWidth = vH * targetAspect;
-        offsetX = (vW - cropWidth) / 2;
-        offsetY = 0;
+        // Frame face so total crop height covers ~2.3x face height (giving head + shoulder room)
+        cropH = Math.min(vH, Math.max(faceH * 2.3, vH * 0.6));
+        cropW = cropH * targetAspect;
+
+        // Position crop center X directly over face center X
+        cropX = faceCx - cropW / 2;
+
+        // Position crop Y so eyes/face center is situated ~38% down from top of frame (ideal ID passport framing)
+        cropY = faceCy - cropH * 0.38;
+
+        // Clamp crop boundaries inside video frame
+        if (cropX < 0) cropX = 0;
+        if (cropY < 0) cropY = 0;
+        if (cropX + cropW > vW) cropX = vW - cropW;
+        if (cropY + cropH > vH) cropY = vH - cropH;
+
       } else {
-        cropWidth = vW;
-        cropHeight = vW / targetAspect;
-        offsetX = 0;
-        offsetY = (vH - cropHeight) / 2;
+        // Fallback: Default 4x5 center crop
+        if (vW / vH > targetAspect) {
+          cropH = vH;
+          cropW = vH * targetAspect;
+        } else {
+          cropW = vW;
+          cropH = vW / targetAspect;
+        }
+        cropX = (vW - cropW) / 2;
+        cropY = (vH - cropH) / 2;
       }
 
       ctx.save();
+      ctx.imageSmoothingQuality = 'high';
+
       if (state.settings.flipCaptured) {
-        ctx.translate(resW, 0);
+        ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
       }
 
-      ctx.drawImage(video, offsetX, offsetY, cropWidth, cropHeight, 0, 0, resW, resH);
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
       ctx.restore();
 
-      const filename = generateStudentPhotoFilename(student, state.settings.format);
-      const dataUrl = cropCanvas.toDataURL(state.settings.format, state.settings.quality);
+      const format = state.settings.format || 'image/jpeg';
+      const quality = parseFloat(state.settings.quality || 0.90);
+      const dataUrl = canvas.toDataURL(format, quality);
 
-      state.capturedTempData = { dataUrl, filename };
+      previewCapturedPhoto(dataUrl);
+    }
 
-      document.getElementById('preview-image').src = dataUrl;
-      document.getElementById('preview-student-name').textContent = student.name;
-      document.getElementById('preview-student-code').textContent = `CODE: ${student.code}`;
-      document.getElementById('preview-filename-info').textContent = `Filename: ${filename}`;
-      document.getElementById('modal-preview').classList.remove('hidden');
+    function processImageToCropCanvas(imgElement) {
+      const canvas = document.getElementById('crop-canvas');
+      const ctx = canvas.getContext('2d');
+
+      const [resW, resH] = (state.settings.resolution || '1200x1500').split('x').map(Number);
+      canvas.width = resW || 1200;
+      canvas.height = resH || 1500;
+
+      const vW = imgElement.naturalWidth || imgElement.width;
+      const vH = imgElement.naturalHeight || imgElement.height;
+
+      const targetAspect = 4 / 5;
+      let cropW, cropH;
+
+      if (vW / vH > targetAspect) {
+        cropH = vH;
+        cropW = vH * targetAspect;
+      } else {
+        cropW = vW;
+        cropH = vW / targetAspect;
+      }
+
+      const cropX = (vW - cropW) / 2;
+      const cropY = (vH - cropH) / 2;
+
+      ctx.save();
+      ctx.imageSmoothingQuality = 'high';
+
+      if (state.settings.flipCaptured) {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+
+      ctx.drawImage(imgElement, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      const format = state.settings.format || 'image/jpeg';
+      const quality = parseFloat(state.settings.quality || 0.90);
+      return canvas.toDataURL(format, quality);
+    }
+
+    function sanitizeFilenamePart(str) {
+      if (!str) return 'unknown';
+      return str.replace(/[\/\\:\*\?"<>\|]/g, '_').trim();
+    }
+
+    function generateStudentPhotoFilename(student) {
+      const ext = (state.settings.format || 'image/jpeg').includes('png') ? 'png' : 
+                  (state.settings.format || 'image/jpeg').includes('webp') ? 'webp' : 'jpg';
+      
+      const code = sanitizeFilenamePart(student.code || 'NOCODE');
+      const name = sanitizeFilenamePart(student.name || 'Student');
+      const grade = sanitizeFilenamePart(student.grade || 'Grade');
+      const sClass = sanitizeFilenamePart(student.class || 'Class');
+      const lang = sanitizeFilenamePart(student.language || 'Lang');
+
+      return `${code}_${name}_${grade}_${sClass}_${lang}.${ext}`;
+    }
+
+    function previewCapturedPhoto(dataUrl) {
+      const student = state.students.find(s => s.id === state.selectedStudentId);
+      if (!student) {
+        showToast("Please select a student first", "warning");
+        return;
+      }
+
+      state.pendingPhotoDataUrl = dataUrl;
+
+      const previewImg = document.getElementById('preview-image');
+      const nameEl = document.getElementById('preview-student-name');
+      const codeEl = document.getElementById('preview-student-code');
+      const fileInfo = document.getElementById('preview-filename-info');
+
+      if (previewImg) previewImg.src = dataUrl;
+      if (nameEl) nameEl.textContent = student.name;
+      if (codeEl) codeEl.textContent = `CODE: ${student.code}`;
+      if (fileInfo) fileInfo.textContent = `Filename: ${generateStudentPhotoFilename(student)}`;
+
+      const modal = document.getElementById('modal-preview');
+      if (modal) modal.classList.remove('hidden');
     }
 
     function flipPreviewImage() {
-      if (!state.capturedTempData || !state.capturedTempData.dataUrl) return;
+      if (!state.pendingPhotoDataUrl) return;
 
       const img = new Image();
       img.onload = function() {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
-        const ctx = tempCanvas.getContext('2d');
-        ctx.imageSmoothingQuality = 'high';
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
 
-        ctx.translate(tempCanvas.width, 0);
+        ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(img, 0, 0);
 
-        const newUrl = tempCanvas.toDataURL(state.settings.format, state.settings.quality);
-        state.capturedTempData.dataUrl = newUrl;
-        document.getElementById('preview-image').src = newUrl;
-        showToast('Photo flipped horizontally', 'info');
+        const format = state.settings.format || 'image/jpeg';
+        const quality = parseFloat(state.settings.quality || 0.90);
+        state.pendingPhotoDataUrl = canvas.toDataURL(format, quality);
+
+        const previewImg = document.getElementById('preview-image');
+        if (previewImg) previewImg.src = state.pendingPhotoDataUrl;
       };
-      img.src = state.capturedTempData.dataUrl;
+      img.src = state.pendingPhotoDataUrl;
     }
 
-    function exportToExcel(data, filename) {
-      const exportData = data.map(s => {
-        const photoName = s.photoFilename || (s.photoData ? generateStudentPhotoFilename(s, state.settings.format) : "");
-        return {
-          "Student Code": s.code || "",
-          "Full Name": s.name || "",
-          "Grade": s.grade || "",
-          "Class": s.classSection || "",
-          "Language": s.language || "",
-          "Photo Status": s.status || "Pending",
-          "Photo Filename": photoName
-        };
-      });
+    async function saveCapturedPhoto() {
+      const student = state.students.find(s => s.id === state.selectedStudentId);
+      if (!student || !state.pendingPhotoDataUrl) return;
 
-      const worksheet = XLSX.utils.json_to_sheet(exportData);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Students");
-      XLSX.writeFile(workbook, filename);
-      showToast(`Exported ${filename}`, "success");
-    }
-
-    function exportRemainingExcel() {
-      const remaining = state.students.filter(s => s.status === 'Pending');
-      if (remaining.length === 0) {
-        showToast("All students have completed photos!", "info");
-        return;
+      let finalPhoto = state.pendingPhotoDataUrl;
+      if (finalPhoto && finalPhoto.length > 850000) {
+        finalPhoto = await window.optimizePhotoForCloud(finalPhoto);
       }
-      exportToExcel(remaining, "Remaining_Students_Pending_Photos.xlsx");
+
+      student.photo = finalPhoto;
+      student.status = 'Captured';
+      student.photoFilename = generateStudentPhotoFilename(student);
+
+      saveState();
+
+      if (window.saveStudentToCloud) {
+        window.saveStudentToCloud(student);
+      }
+
+      renderStudentTable();
+      selectStudent(student.id);
+
+      const modal = document.getElementById('modal-preview');
+      if (modal) modal.classList.add('hidden');
+
+      showToast(`Photo saved for ${student.name}!`, "success");
     }
 
     function downloadSampleExcel() {
-      exportToExcel(DEFAULT_STUDENTS, "EduPhoto_Sample_Student_Import_Template.xlsx");
+      const sampleData = [
+        { "Student Code": "S1001", "Full Name": "ڕێبین ئەحمەد", "Grade": "Grade 10", "Class": "10-A", "Curriculum Language": "Kurdish" },
+        { "Student Code": "S1002", "Full Name": "لەنیا کامەران", "Grade": "Grade 10", "Class": "10-A", "Curriculum Language": "Kurdish" },
+        { "Student Code": "S1003", "Full Name": "Alexander Wright", "Grade": "Grade 11", "Class": "11-B", "Curriculum Language": "English" },
+        { "Student Code": "S1004", "Full Name": "سارە عومەر", "Grade": "Grade 11", "Class": "11-B", "Curriculum Language": "Kurdish" },
+        { "Student Code": "S1005", "Full Name": "Youssef Mansour", "Grade": "Grade 12", "Class": "12-C", "Curriculum Language": "Arabic" }
+      ];
+
+      const ws = XLSX.utils.json_to_sheet(sampleData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Students");
+      XLSX.writeFile(wb, "Sample_Student_Roster.xlsx");
     }
 
-    async function exportUnifiedBundle() {
-      if (typeof JSZip === 'undefined' || typeof XLSX === 'undefined' || typeof saveAs === 'undefined') {
-        showToast('Export libraries loading, please try again in a moment.', 'warning');
+    function importExcelFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet);
+
+          if (!json || json.length === 0) {
+            showToast("No data rows found in the selected Excel sheet", "warning");
+            return;
+          }
+
+          // Build set of existing student codes (case-insensitive)
+          const existingCodes = new Set(
+            state.students.map(s => String(s.code || '').trim().toLowerCase())
+          );
+
+          const batchCodes = new Set();
+          const newStudents = [];
+          let skippedDuplicatesCount = 0;
+
+          json.forEach((row, idx) => {
+            const rawCode = String(row['Student Code'] || row['Code'] || row['ID'] || '').trim();
+            const codeNormalized = rawCode.toLowerCase();
+
+            // Skip if duplicate in existing DB or duplicate within current import batch
+            if (codeNormalized && (existingCodes.has(codeNormalized) || batchCodes.has(codeNormalized))) {
+              skippedDuplicatesCount++;
+              return;
+            }
+
+            const studentCode = rawCode || `S10${state.students.length + newStudents.length + 1}`;
+            if (rawCode) batchCodes.add(codeNormalized);
+
+            newStudents.push({
+              id: 'S_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).substring(2, 6),
+              code: studentCode,
+              name: String(row['Full Name'] || row['Name'] || row['Student Name'] || `Student ${idx + 1}`).trim(),
+              grade: String(row['Grade'] || 'Grade 10').trim(),
+              class: String(row['Class'] || row['Section'] || '10-A').trim(),
+              language: String(row['Curriculum Language'] || row['Language'] || 'Kurdish').trim(),
+              status: 'Pending',
+              photo: null
+            });
+          });
+
+          if (newStudents.length === 0) {
+            showToast(`All ${json.length} student(s) in Excel were skipped because their Student Codes already exist!`, "warning");
+            return;
+          }
+
+          state.students = [...state.students, ...newStudents];
+          saveState();
+
+          if (window.saveAllStudentsToCloud) {
+            window.saveAllStudentsToCloud(newStudents);
+          }
+
+          renderFilters();
+          renderStudentTable();
+
+          if (skippedDuplicatesCount > 0) {
+            showToast(`Imported ${newStudents.length} new student(s). Skipped ${skippedDuplicatesCount} duplicate code(s).`, "success");
+          } else {
+            showToast(`Successfully imported all ${newStudents.length} new student(s)!`, "success");
+          }
+        } catch (err) {
+          showToast("Error parsing Excel file: " + err.message, "error");
+        }
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+
+    function exportToExcel() {
+      const data = state.students.map(s => ({
+        "Student Code": s.code,
+        "Full Name": s.name,
+        "Grade": s.grade,
+        "Class": s.class,
+        "Curriculum Language": s.language,
+        "Status": s.photo ? 'Captured' : s.status,
+        "Photo Filename": s.photo ? generateStudentPhotoFilename(s) : "NO_PHOTO"
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Student_Roster");
+      XLSX.writeFile(wb, "Student_Photo_Roster_Export.xlsx");
+    }
+
+    function exportRemainingExcel() {
+      const remaining = state.students.filter(s => !s.photo || s.status === 'Pending');
+      if (remaining.length === 0) {
+        showToast("All students have photos captured!", "success");
         return;
       }
 
-      const zip = new JSZip();
-      const photoFolder = zip.folder("Student_Photos_4x5");
+      const data = remaining.map(s => ({
+        "Student Code": s.code,
+        "Full Name": s.name,
+        "Grade": s.grade,
+        "Class": s.class,
+        "Curriculum Language": s.language,
+        "Status": "Pending Photo"
+      }));
 
-      let photoCount = 0;
-      state.students.forEach(s => {
-        if (s.photoData) {
-          const photoName = s.photoFilename || generateStudentPhotoFilename(s, state.settings.format);
-          s.photoFilename = photoName;
-          const base64Data = s.photoData.split(',')[1];
-          if (base64Data) {
-            photoFolder.file(photoName, base64Data, { base64: true });
-            photoCount++;
-          }
-        }
-      });
-
-      const exportData = state.students.map(s => {
-        const photoName = s.photoFilename || (s.photoData ? generateStudentPhotoFilename(s, state.settings.format) : "N/A");
-        return {
-          "Student Code": s.code || "",
-          "Full Name": s.name || "",
-          "Grade": s.grade || "",
-          "Class": s.classSection || "",
-          "Language": s.language || "",
-          "Photo Status": s.status || "Pending",
-          "Photo Filename": photoName
-        };
-      });
-
-      const worksheet = XLSX.utils.json_to_sheet(exportData);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Student Roster");
-      
-      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-      zip.file("Student_Data_Roster.xlsx", excelBuffer);
-
-      showToast(`Generating Zip with ${photoCount} photos and Excel sheet...`, "info");
-
-      try {
-        const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, "EduPhoto_Bundle_Export.zip");
-        showToast("Bundle download started!", "success");
-      } catch (e) {
-        console.error("ZIP Generation Error:", e);
-        showToast("Failed to create ZIP export", "error");
-      }
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Remaining_Students");
+      XLSX.writeFile(wb, "Pending_Students_List.xlsx");
     }
 
-    function importExcelFile(e) {
-      const file = e.target.files[0];
-      if (!file) return;
+    async function exportUnifiedBundle() {
+      const capturedStudents = state.students.filter(s => s.photo);
+      
+      if (capturedStudents.length === 0) {
+        showToast("No photos captured yet to export bundle", "warning");
+        exportToExcel();
+        return;
+      }
 
-      const reader = new FileReader();
-      reader.onload = function(evt) {
-        try {
-          const data = new Uint8Array(evt.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const json = XLSX.utils.sheet_to_json(firstSheet);
+      showToast("Generating Excel & Photos ZIP archive...", "info");
 
-          if (json && json.length > 0) {
-            const importedStudents = json.map((row, idx) => ({
-              id: `STD_${Date.now()}_${idx}`,
-              code: String(row["Student Code"] || row["Code"] || row["ID"] || `S${1000 + idx}`),
-              name: String(row["Full Name"] || row["Name"] || row["Student Name"] || `Student ${idx + 1}`),
-              grade: String(row["Grade"] || "Grade 10"),
-              classSection: String(row["Class"] || row["Class Section"] || "10-A"),
-              language: String(row["Language"] || row["Curriculum Language"] || "Kurdish"),
-              status: String(row["Photo Status"] || "Pending"),
-              photoFilename: String(row["Photo Filename"] || ""),
-              photoData: null
-            }));
+      const zip = new JSZip();
+      const photosFolder = zip.folder("Student_Photos_4x5");
 
-            state.students = importedStudents;
-            saveState();
+      const excelData = state.students.map(s => ({
+        "Student Code": s.code,
+        "Full Name": s.name,
+        "Grade": s.grade,
+        "Class": s.class,
+        "Curriculum Language": s.language,
+        "Status": s.photo ? 'Captured' : s.status,
+        "Photo Filename": s.photo ? generateStudentPhotoFilename(s) : "NO_PHOTO"
+      }));
 
-            if (window.saveAllStudentsToCloud) {
-              window.saveAllStudentsToCloud(importedStudents);
-            }
+      const ws = XLSX.utils.json_to_sheet(excelData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Roster");
+      const excelArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      zip.file("Student_Data_Roster.xlsx", excelArrayBuffer);
 
-            renderFilters();
-            renderStudentTable();
-            showToast(`Successfully imported & synced ${importedStudents.length} students!`, "success");
-          } else {
-            showToast("Excel file contained no readable student data", "warning");
-          }
-        } catch (err) {
-          console.error("Import error:", err);
-          showToast("Error parsing Excel file. Please check format.", "error");
-        }
-      };
-      reader.readAsArrayBuffer(file);
-      e.target.value = "";
+      capturedStudents.forEach(s => {
+        const filename = generateStudentPhotoFilename(s);
+        const base64Data = s.photo.split(',')[1];
+        photosFolder.file(filename, base64Data, { base64: true });
+      });
+
+      try {
+        const blob = await zip.generateAsync({ type: "blob" });
+        saveAs(blob, `EduPhoto_Export_Bundle_${Date.now()}.zip`);
+        showToast("ZIP Bundle exported successfully!", "success");
+      } catch (err) {
+        showToast("Error creating ZIP bundle: " + err.message, "error");
+      }
     }
 
     function renderUsersList() {
@@ -1473,156 +1880,207 @@
       container.innerHTML = state.users.map(u => `
         <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
           <div>
-            <div class="font-semibold text-white text-xs">${u.name} <span class="text-[10px] text-brand-400 font-normal">(${u.role})</span></div>
-            <div class="text-[10px] text-slate-500">${u.email}</div>
+            <div class="font-semibold text-slate-200 text-xs">${u.name}</div>
+            <div class="text-[11px] text-slate-400">${u.email} &bull; <span class="text-brand-400 font-medium">${u.role}</span></div>
           </div>
-          ${u.role !== 'Admin' ? `
-            <button onclick="deleteUser('${u.id}')" class="px-2 py-1 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 text-[10px] font-semibold rounded-lg border border-rose-500/20 transition">
-              <i class="fa-solid fa-trash-can"></i> Remove
-            </button>
-          ` : '<span class="text-[10px] text-slate-500 italic">Primary Admin</span>'}
+          ${u.role !== 'Admin' 
+            ? `<button onclick="deleteUser('${u.id}')" class="text-xs text-rose-400 hover:text-rose-300 p-1"><i class="fa-solid fa-trash"></i></button>`
+            : '<span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded">Owner</span>'
+          }
         </div>
       `).join('');
     }
 
     function addUser() {
-      const nameEl = document.getElementById('new-user-name');
-      const emailEl = document.getElementById('new-user-email');
-      const roleEl = document.getElementById('new-user-role');
+      const name = document.getElementById('new-user-name').value.trim();
+      const email = document.getElementById('new-user-email').value.trim();
+      const role = document.getElementById('new-user-role').value;
 
-      if (!nameEl.value.trim() || !emailEl.value.trim()) {
-        showToast('Please enter both name and email for the new user', 'warning');
+      if (!name || !email) {
+        showToast("Please enter user name and email", "warning");
         return;
       }
 
-      const newUser = {
-        id: `usr_${Date.now()}`,
-        name: nameEl.value.trim(),
-        email: emailEl.value.trim(),
-        role: roleEl.value
-      };
-
-      state.users.push(newUser);
-      saveState();
-      populateLoginUsersDropdown();
-      renderUsersList();
-
-      nameEl.value = '';
-      emailEl.value = '';
-      showToast(`Account created for ${newUser.name}`, 'success');
-    }
-
-    function deleteUser(userId) {
-      state.users = state.users.filter(u => u.id !== userId);
-      saveState();
-      populateLoginUsersDropdown();
-      renderUsersList();
-      showToast('User account removed', 'info');
-    }
-
-    function showToast(message, type = 'info') {
-      const container = document.getElementById('toast-container');
-      if (!container) return;
-
-      const toast = document.createElement('div');
-      const colors = {
-        success: 'bg-emerald-900/90 border-emerald-500 text-emerald-200',
-        error: 'bg-rose-900/90 border-rose-500 text-rose-200',
-        warning: 'bg-amber-900/90 border-amber-500 text-amber-200',
-        info: 'bg-slate-900/90 border-brand-500 text-slate-200'
-      };
-
-      const icons = {
-        success: 'fa-circle-check text-emerald-400',
-        error: 'fa-circle-exclamation text-rose-400',
-        warning: 'fa-triangle-exclamation text-amber-400',
-        info: 'fa-circle-info text-brand-400'
-      };
-
-      toast.className = `p-3.5 rounded-xl border ${colors[type] || colors.info} text-xs font-semibold shadow-2xl flex items-center gap-2.5 transition-all duration-300 transform translate-y-2 opacity-0 pointer-events-auto`;
-      toast.innerHTML = `<i class="fa-solid ${icons[type] || icons.info} text-sm"></i> <span>${message}</span>`;
-
-      container.appendChild(toast);
-
-      requestAnimationFrame(() => {
-        toast.classList.remove('translate-y-2', 'opacity-0');
+      state.users.push({
+        id: 'u_' + Date.now(),
+        name,
+        email,
+        role
       });
 
-      setTimeout(() => {
-        toast.classList.add('opacity-0', 'translate-y-2');
-        setTimeout(() => toast.remove(), 300);
-      }, 3500);
+      saveState();
+      renderUsersList();
+
+      document.getElementById('new-user-name').value = '';
+      document.getElementById('new-user-email').value = '';
+
+      showToast("User account created successfully!", "success");
+    }
+
+    function deleteUser(id) {
+      state.users = state.users.filter(u => u.id !== id);
+      saveState();
+      renderUsersList();
+      showToast("User account removed", "info");
     }
 
     function setupEventListeners() {
-      // Manual student creation modal triggers
-      document.getElementById('btn-open-add-student')?.addEventListener('click', () => {
-        document.getElementById('modal-add-student')?.classList.remove('hidden');
+      // Filters
+      document.getElementById('filter-search')?.addEventListener('input', (e) => {
+        state.filters.search = e.target.value;
+        renderStudentTable();
       });
-      document.getElementById('btn-empty-add-manual')?.addEventListener('click', () => {
-        document.getElementById('modal-add-student')?.classList.remove('hidden');
+
+      document.getElementById('filter-grade')?.addEventListener('change', (e) => {
+        state.filters.grade = e.target.value;
+        renderStudentTable();
       });
-      document.getElementById('btn-close-add-student')?.addEventListener('click', () => {
-        document.getElementById('modal-add-student')?.classList.add('hidden');
+
+      document.getElementById('filter-class')?.addEventListener('change', (e) => {
+        state.filters.class = e.target.value;
+        renderStudentTable();
       });
-      document.getElementById('btn-cancel-add-student')?.addEventListener('click', () => {
-        document.getElementById('modal-add-student')?.classList.add('hidden');
+
+      document.getElementById('filter-language')?.addEventListener('change', (e) => {
+        state.filters.language = e.target.value;
+        renderStudentTable();
       });
-      document.getElementById('form-add-student')?.addEventListener('submit', handleAddManualStudent);
+
+      document.getElementById('filter-status')?.addEventListener('change', (e) => {
+        state.filters.status = e.target.value;
+        renderStudentTable();
+      });
+
+      // Actions & Sidebar Buttons
+      document.getElementById('btn-import-excel')?.addEventListener('click', () => {
+        document.getElementById('excel-file-input').click();
+      });
+
+      document.getElementById('excel-file-input')?.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) importExcelFile(e.target.files[0]);
+      });
+
+      document.getElementById('btn-export-bundle')?.addEventListener('click', exportUnifiedBundle);
+      document.getElementById('btn-download-sample')?.addEventListener('click', downloadSampleExcel);
+      document.getElementById('btn-export-remaining')?.addEventListener('click', exportRemainingExcel);
+
+      document.getElementById('btn-reset-data')?.addEventListener('click', () => {
+        const modal = document.getElementById('modal-clear-confirm');
+        if (modal) modal.classList.remove('hidden');
+      });
+
+      document.getElementById('btn-cancel-clear')?.addEventListener('click', () => {
+        document.getElementById('modal-clear-confirm').classList.add('hidden');
+      });
+
+      document.getElementById('btn-confirm-clear')?.addEventListener('click', () => {
+        state.students = [];
+        saveState();
+        renderFilters();
+        renderStudentTable();
+        document.getElementById('modal-clear-confirm').classList.add('hidden');
+        showToast("All data cleared", "info");
+      });
+
+      // Delete confirmation listeners
+      document.getElementById('btn-cancel-delete')?.addEventListener('click', () => {
+        document.getElementById('modal-delete-confirm').classList.add('hidden');
+        studentToDeleteId = null;
+      });
+
+      document.getElementById('btn-confirm-delete')?.addEventListener('click', confirmDeleteStudent);
+
+      // Camera Controls
+      document.getElementById('btn-snap-photo')?.addEventListener('click', snapPhoto);
+      
+      document.getElementById('btn-native-shutter')?.addEventListener('click', () => {
+        document.getElementById('native-camera-input').click();
+      });
+
+      document.getElementById('native-camera-input')?.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          const file = e.target.files[0];
+          const img = new Image();
+          img.onload = function() {
+            const dataUrl = processImageToCropCanvas(img);
+            previewCapturedPhoto(dataUrl);
+          };
+          img.src = URL.createObjectURL(file);
+        }
+      });
+
+      document.getElementById('camera-select')?.addEventListener('change', (e) => {
+        state.activeCameraDeviceId = e.target.value;
+        startCameraStream(state.activeCameraDeviceId);
+      });
+
+      document.getElementById('btn-retry-camera')?.addEventListener('click', () => {
+        initCameraDevices();
+      });
+
+      // Toggle live camera mirror view
+      document.getElementById('btn-toggle-camera')?.addEventListener('click', () => {
+        state.mirrorCamera = !state.mirrorCamera;
+        const video = document.getElementById('webcam-video');
+        const faceCanvas = document.getElementById('face-canvas');
+        if (state.mirrorCamera) {
+          video?.classList.add('-scale-x-100');
+          faceCanvas?.classList.add('-scale-x-100');
+          showToast("Live camera mirror enabled", "info");
+        } else {
+          video?.classList.remove('-scale-x-100');
+          faceCanvas?.classList.remove('-scale-x-100');
+          showToast("Live camera mirror disabled", "info");
+        }
+      });
+
+      // Modal Triggers & Actions
+      document.getElementById('btn-close-preview')?.addEventListener('click', () => {
+        document.getElementById('modal-preview').classList.add('hidden');
+      });
+
+      document.getElementById('btn-retake-photo')?.addEventListener('click', () => {
+        document.getElementById('modal-preview').classList.add('hidden');
+      });
+
+      document.getElementById('btn-flip-preview')?.addEventListener('click', flipPreviewImage);
+      document.getElementById('btn-save-photo')?.addEventListener('click', saveCapturedPhoto);
+
+      // Large photo viewer modal close
+      document.getElementById('btn-close-view-photo')?.addEventListener('click', () => {
+        document.getElementById('modal-view-photo').classList.add('hidden');
+      });
 
       // Settings Modal
       document.getElementById('btn-show-settings')?.addEventListener('click', () => {
-        const flipSettingEl = document.getElementById('setting-flip-captured');
-        if (flipSettingEl) flipSettingEl.checked = state.settings.flipCaptured !== false;
-        
-        const fbConfig = window.getFirebaseConfig();
-        const fbJsonArea = document.getElementById('setting-firebase-json');
-        const fbStatus = document.getElementById('settings-cloud-status');
-        if (fbConfig) {
-          if (fbJsonArea) fbJsonArea.value = JSON.stringify(fbConfig, null, 2);
-          if (fbStatus) {
-            fbStatus.textContent = "Cloud Active";
-            fbStatus.className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
-          }
-        }
-        document.getElementById('modal-settings')?.classList.remove('hidden');
+        const modal = document.getElementById('modal-settings');
+        if (modal) modal.classList.remove('hidden');
+      });
+
+      document.getElementById('btn-close-settings')?.addEventListener('click', () => {
+        document.getElementById('modal-settings').classList.add('hidden');
+      });
+
+      document.getElementById('setting-quality')?.addEventListener('input', (e) => {
+        document.getElementById('quality-val-display').textContent = parseFloat(e.target.value).toFixed(2);
       });
 
       document.getElementById('btn-apply-firebase-config')?.addEventListener('click', () => {
-        const jsonStr = document.getElementById('setting-firebase-json').value.trim();
-        if (!jsonStr) {
+        const raw = document.getElementById('setting-firebase-json').value.trim();
+        if (!raw) {
           window.saveFirebaseConfig(null);
           return;
         }
         try {
-          let configObj = null;
-          try {
-            configObj = JSON.parse(jsonStr);
-          } catch (err) {
-            // Smart auto-parse: Extract object and convert JS snippet syntax to valid JSON
-            const match = jsonStr.match(/\{[\s\S]*\}/);
-            if (match) {
-              let cleaned = match[0]
-                .replace(/\/\/.*/g, '')
-                .replace(/\/\*[\s\S]*?\*\//g, '')
-                .replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":')
-                .replace(/:\s*'([^']*)'/g, ':"$1"')
-                .replace(/,\s*([}\]])/g, '$1');
-              configObj = JSON.parse(cleaned);
-            }
+          let jsonStr = raw;
+          if (raw.includes('{')) {
+            jsonStr = raw.substring(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
           }
-          if (configObj && configObj.apiKey) {
-            window.saveFirebaseConfig(configObj);
-          } else {
-            throw new Error("Missing apiKey in configuration object");
-          }
+          const config = JSON.parse(jsonStr);
+          window.saveFirebaseConfig(config);
         } catch (e) {
-          showToast("Invalid syntax. Please paste a valid JSON or Firebase config object.", "error");
+          showToast("Invalid JSON syntax. Please check your Firebase config object.", "error");
         }
-      });
-
-      document.getElementById('btn-close-settings')?.addEventListener('click', () => {
-        document.getElementById('modal-settings')?.classList.add('hidden');
       });
 
       document.getElementById('btn-save-settings')?.addEventListener('click', () => {
@@ -1630,116 +2088,162 @@
         state.settings.quality = parseFloat(document.getElementById('setting-quality').value);
         state.settings.resolution = document.getElementById('setting-resolution').value;
         state.settings.flipCaptured = document.getElementById('setting-flip-captured').checked;
+
         saveState();
-        document.getElementById('modal-settings')?.classList.add('hidden');
-        showToast('Settings saved successfully', 'success');
+        document.getElementById('modal-settings').classList.add('hidden');
+        showToast("Settings updated successfully!", "success");
       });
 
-      document.getElementById('setting-quality')?.addEventListener('input', (e) => {
-        const valDisp = document.getElementById('quality-val-display');
-        if (valDisp) valDisp.textContent = parseFloat(e.target.value).toFixed(2);
+      // Manual Add Student Modal
+      document.getElementById('btn-open-add-student')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student').classList.remove('hidden');
       });
 
-      // Guide Modal
-      document.getElementById('btn-show-guide')?.addEventListener('click', () => {
-        document.getElementById('modal-guide')?.classList.remove('hidden');
-      });
-      document.getElementById('btn-close-guide')?.addEventListener('click', () => {
-        document.getElementById('modal-guide')?.classList.add('hidden');
+      document.getElementById('btn-empty-add-manual')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student').classList.remove('hidden');
       });
 
-      // Admin Panel Modal
+      document.getElementById('btn-close-add-student')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student').classList.add('hidden');
+      });
+
+      document.getElementById('btn-cancel-add-student')?.addEventListener('click', () => {
+        document.getElementById('modal-add-student').classList.add('hidden');
+      });
+
+      document.getElementById('form-add-student')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const rawCode = document.getElementById('manual-student-code').value.trim();
+        const code = rawCode || `S10${state.students.length + 1}`;
+        const name = document.getElementById('manual-student-name').value.trim();
+        const grade = document.getElementById('manual-student-grade').value.trim() || 'Grade 10';
+        const sClass = document.getElementById('manual-student-class').value.trim() || '10-A';
+        const language = document.getElementById('manual-student-language').value;
+
+        if (!name) return;
+
+        // Duplicate code check for manual addition
+        const existingCodes = new Set(state.students.map(s => String(s.code || '').trim().toLowerCase()));
+        if (rawCode && existingCodes.has(rawCode.toLowerCase())) {
+          showToast(`Student Code "${rawCode}" already exists! Please use a unique code.`, "error");
+          return;
+        }
+
+        const newStudent = {
+          id: 'S_' + Date.now(),
+          code,
+          name,
+          grade,
+          class: sClass,
+          language,
+          status: 'Pending',
+          photo: null
+        };
+
+        state.students.push(newStudent);
+        saveState();
+        renderFilters();
+        renderStudentTable();
+
+        selectStudent(newStudent.id);
+
+        document.getElementById('modal-add-student').classList.add('hidden');
+        document.getElementById('form-add-student').reset();
+
+        showToast(`Student ${name} added!`, "success");
+      });
+
+      document.getElementById('btn-load-sample-direct')?.addEventListener('click', () => {
+        state.students = [
+          { id: 'S1001', code: 'S1001', name: 'ڕێبین ئەحمەد', grade: 'Grade 10', class: '10-A', language: 'Kurdish', status: 'Pending', photo: null },
+          { id: 'S1002', code: 'S1002', name: 'لەنیا کامەران', grade: 'Grade 10', class: '10-A', language: 'Kurdish', status: 'Pending', photo: null },
+          { id: 'S1003', code: 'S1003', name: 'Alexander Wright', grade: 'Grade 11', class: '11-B', language: 'English', status: 'Pending', photo: null },
+          { id: 'S1004', code: 'S1004', name: 'سارە عومەر', grade: 'Grade 11', class: '11-B', language: 'Kurdish', status: 'Pending', photo: null },
+          { id: 'S1005', code: 'S1005', name: 'Youssef Mansour', grade: 'Grade 12', class: '12-C', language: 'Arabic', status: 'Pending', photo: null }
+        ];
+        saveState();
+        renderFilters();
+        renderStudentTable();
+        showToast("Sample students loaded!", "success");
+      });
+
+      // Admin Modal
       document.getElementById('btn-admin-panel')?.addEventListener('click', () => {
         renderUsersList();
-        document.getElementById('modal-admin')?.classList.remove('hidden');
+        document.getElementById('modal-admin').classList.remove('hidden');
       });
+
       document.getElementById('btn-close-admin')?.addEventListener('click', () => {
-        document.getElementById('modal-admin')?.classList.add('hidden');
+        document.getElementById('modal-admin').classList.add('hidden');
       });
 
       document.getElementById('btn-add-user')?.addEventListener('click', addUser);
 
-      // Photo Preview Modal
-      document.getElementById('btn-close-preview')?.addEventListener('click', () => {
-        document.getElementById('modal-preview')?.classList.add('hidden');
-      });
-      document.getElementById('btn-retake-photo')?.addEventListener('click', () => {
-        document.getElementById('modal-preview')?.classList.add('hidden');
-      });
-      document.getElementById('btn-flip-preview')?.addEventListener('click', flipPreviewImage);
-      document.getElementById('btn-save-photo')?.addEventListener('click', saveCapturedPhoto);
-
-      // Excel & File Actions
-      document.getElementById('btn-import-excel')?.addEventListener('click', () => {
-        document.getElementById('excel-file-input')?.click();
-      });
-      document.getElementById('excel-file-input')?.addEventListener('change', importExcelFile);
-
-      document.getElementById('btn-export-bundle')?.addEventListener('click', exportUnifiedBundle);
-      document.getElementById('btn-export-remaining')?.addEventListener('click', exportRemainingExcel);
-      document.getElementById('btn-download-sample')?.addEventListener('click', downloadSampleExcel);
-      
-      document.getElementById('btn-reset-data')?.addEventListener('click', () => {
-        state.students = JSON.parse(JSON.stringify(DEFAULT_STUDENTS));
-        state.activeStudentId = null;
-        saveState();
-        renderFilters();
-        renderStudentTable();
-        showToast('Student data reset to default dataset', 'info');
+      // Guide Modal
+      document.getElementById('btn-show-guide')?.addEventListener('click', () => {
+        document.getElementById('modal-guide').classList.remove('hidden');
       });
 
-      document.getElementById('btn-load-sample-direct')?.addEventListener('click', () => {
-        state.students = JSON.parse(JSON.stringify(DEFAULT_STUDENTS));
-        saveState();
-        renderFilters();
-        renderStudentTable();
-        showToast('Sample dataset loaded', 'success');
-      });
-
-      // Filters
-      ['filter-grade', 'filter-class', 'filter-language', 'filter-status'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          el.addEventListener('change', (e) => {
-            const key = id.replace('filter-', '');
-            const stateKey = key === 'class' ? 'classSection' : key;
-            state.filters[stateKey] = e.target.value;
-            renderStudentTable();
-          });
-        }
-      });
-
-      // Camera Studio Controls
-      document.getElementById('btn-snap-photo')?.addEventListener('click', snapPhoto);
-      
-      document.getElementById('camera-select')?.addEventListener('change', (e) => {
-        if (e.target.value) {
-          startCameraStream(e.target.value);
-        }
-      });
-
-      document.getElementById('btn-retry-camera')?.addEventListener('click', () => {
-        showToast('Re-initializing camera...', 'info');
-        initCameraDevices();
-      });
-
-      document.getElementById('btn-toggle-camera')?.addEventListener('click', () => {
-        state.isMirrored = !state.isMirrored;
-        const video = document.getElementById('webcam-video');
-        const canvas = document.getElementById('face-canvas');
-        if (state.isMirrored) {
-          video?.classList.add('-scale-x-100');
-          canvas?.classList.add('-scale-x-100');
-        } else {
-          video?.classList.remove('-scale-x-100');
-          canvas?.classList.remove('-scale-x-100');
-        }
-        showToast(`Camera mirror ${state.isMirrored ? 'enabled' : 'disabled'}`, 'info');
+      document.getElementById('btn-close-guide')?.addEventListener('click', () => {
+        document.getElementById('modal-guide').classList.add('hidden');
       });
     }
 
+    function switchMobileTab(tab) {
+      const panelStudio = document.getElementById('panel-studio');
+      const panelRoster = document.getElementById('panel-roster');
+
+      const tabStudio = document.getElementById('tab-studio');
+      const tabRoster = document.getElementById('tab-roster');
+      const tabActions = document.getElementById('tab-actions');
+
+      if (window.innerWidth >= 768) {
+        if (panelStudio) { panelStudio.classList.remove('hidden'); panelStudio.classList.add('flex'); }
+        if (panelRoster) { panelRoster.classList.remove('hidden'); panelRoster.classList.add('flex'); }
+        return;
+      }
+
+      [tabStudio, tabRoster, tabActions].forEach(t => {
+        if (t) {
+          t.classList.remove('text-brand-400', 'border-brand-500');
+          t.classList.add('text-slate-400', 'border-transparent');
+        }
+      });
+
+      if (tab === 'studio') {
+        if (panelStudio) { panelStudio.classList.remove('hidden'); panelStudio.classList.add('flex', 'w-full'); }
+        if (panelRoster) { panelRoster.classList.add('hidden'); panelRoster.classList.remove('flex'); }
+        if (tabStudio) { tabStudio.classList.add('text-brand-400', 'border-brand-500'); tabStudio.classList.remove('text-slate-400', 'border-transparent'); }
+      } else if (tab === 'roster') {
+        if (panelStudio) { panelStudio.classList.add('hidden'); panelStudio.classList.remove('flex'); }
+        if (panelRoster) { panelRoster.classList.remove('hidden'); panelRoster.classList.add('flex', 'w-full'); }
+        if (tabRoster) { tabRoster.classList.add('text-brand-400', 'border-brand-500'); tabRoster.classList.remove('text-slate-400', 'border-transparent'); }
+      } else if (tab === 'actions') {
+        if (panelStudio) { panelStudio.classList.add('hidden'); panelStudio.classList.remove('flex'); }
+        if (panelRoster) { panelRoster.classList.remove('hidden'); panelRoster.classList.add('flex', 'w-full'); }
+        if (tabActions) { tabActions.classList.add('text-brand-400', 'border-brand-500'); tabActions.classList.remove('text-slate-400', 'border-transparent'); }
+        const topActions = document.getElementById('top-actions-toolbar');
+        if (topActions) topActions.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+
+    window.addEventListener('resize', () => {
+      if (window.innerWidth >= 768) {
+        const panelStudio = document.getElementById('panel-studio');
+        const panelRoster = document.getElementById('panel-roster');
+        if (panelStudio) { panelStudio.classList.remove('hidden'); panelStudio.classList.add('flex'); }
+        if (panelRoster) { panelRoster.classList.remove('hidden'); panelRoster.classList.add('flex'); }
+      } else {
+        switchMobileTab('roster');
+      }
+    });
+
     window.onload = function() {
       loadPersistedState();
+
+      if (window.innerWidth < 768) {
+        switchMobileTab('roster');
+      }
 
       window.onCloudStudentsSync = function(cloudStudents) {
         if (cloudStudents && cloudStudents.length > 0) {
@@ -1750,37 +2254,11 @@
         }
       };
 
-      populateLoginUsersDropdown();
+      initFaceDetectionAI();
       renderFilters();
       renderStudentTable();
       setupEventListeners();
-
-      // Auth form submission
-      document.getElementById('login-form')?.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const selectedUserId = document.getElementById('login-user-select').value;
-        handleLogin(selectedUserId);
-      });
-
-      // One-click quick admin login
-      document.getElementById('btn-quick-admin')?.addEventListener('click', () => {
-        const adminUser = state.users.find(u => u.role === 'Admin') || DEFAULT_ADMIN;
-        handleLogin(adminUser.id);
-      });
-
-      // Filter search listener
-      document.getElementById('filter-search')?.addEventListener('input', (e) => {
-        state.filters.search = e.target.value;
-        renderStudentTable();
-      });
-
-      // Logout event
-      document.getElementById('btn-logout')?.addEventListener('click', () => {
-        state.isLoggedIn = false;
-        state.currentUser = null;
-        document.getElementById('auth-overlay')?.classList.remove('hidden');
-        showToast("Logged out successfully.", "info");
-      });
+      initCameraDevices();
     };
   </script>
 </body>
