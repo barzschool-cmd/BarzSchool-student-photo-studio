@@ -74,43 +74,27 @@
       window.showToast(message, type);
     }
 
-    // Automatically compresses high-resolution photos so they stay safely under Firestore's 1,048,487 byte document limit
-    window.optimizePhotoForCloud = async function(dataUrl, maxBytes = 850000) {
-      if (!dataUrl || typeof dataUrl !== 'string' || dataUrl.length <= maxBytes) {
-        return dataUrl;
-      }
+    // Compresses photos to crisp 800x1000 ID dimensions (~90KB - 150KB) so Firestore and localStorage never fail
+    window.optimizePhotoForCloud = async function(dataUrl, maxBytes = 220000) {
+      if (!dataUrl || typeof dataUrl !== 'string') return dataUrl;
       return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
-          let quality = 0.82;
-          let width = img.naturalWidth || img.width;
-          let height = img.naturalHeight || img.height;
-
-          // Scale dimensions if larger than standard print ID requirements
-          if (width > 1600 || height > 2000) {
-            const scale = Math.min(1600 / width, 2000 / height);
-            width = Math.round(width * scale);
-            height = Math.round(height * scale);
-          }
-
+          let targetW = 800;
+          let targetH = 1000;
           const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
+          canvas.width = targetW;
+          canvas.height = targetH;
           const ctx = canvas.getContext('2d');
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, width, height);
+          ctx.drawImage(img, 0, 0, targetW, targetH);
 
+          let quality = 0.82;
           let result = canvas.toDataURL('image/jpeg', quality);
           while (result.length > maxBytes && quality > 0.45) {
             quality -= 0.08;
             result = canvas.toDataURL('image/jpeg', quality);
-          }
-          if (result.length > maxBytes) {
-            canvas.width = Math.round(width * 0.85);
-            canvas.height = Math.round(height * 0.85);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            result = canvas.toDataURL('image/jpeg', 0.75);
           }
           resolve(result);
         };
@@ -129,7 +113,40 @@
     let db = null;
     let auth = null;
     let isCloudReady = false;
+    let isQuotaExceeded = false;
     let syncUnsubscribe = null;
+
+    window.updateCloudBadgeStatus = function(status, message) {
+      const cloudBadge = document.getElementById('cloud-sync-badge');
+      const settingsCloudStatus = document.getElementById('settings-cloud-status');
+      if (!cloudBadge) return;
+
+      if (status === 'connected') {
+        cloudBadge.classList.remove('hidden');
+        cloudBadge.className = "flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20 cursor-pointer";
+        cloudBadge.innerHTML = '<i class="fa-solid fa-cloud-arrow-up animate-pulse"></i> Multi-Laptop Cloud Synced';
+        cloudBadge.title = message || "Connected live to Firestore cloud database";
+        if (settingsCloudStatus) {
+          settingsCloudStatus.textContent = "Live Connected";
+          settingsCloudStatus.className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-500/20 text-emerald-300";
+        }
+      } else if (status === 'quota-exceeded') {
+        cloudBadge.classList.remove('hidden');
+        cloudBadge.className = "flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/20 cursor-pointer";
+        cloudBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Quota Exceeded (Operating Offline)';
+        cloudBadge.title = "Firebase daily Spark quota exceeded. Running in offline Local Storage mode until quota resets.";
+        if (settingsCloudStatus) {
+          settingsCloudStatus.textContent = "Daily Quota Exceeded";
+          settingsCloudStatus.className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-amber-500/20 text-amber-300";
+        }
+      } else {
+        cloudBadge.classList.add('hidden');
+        if (settingsCloudStatus) {
+          settingsCloudStatus.textContent = "Disconnected";
+          settingsCloudStatus.className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-slate-800 text-slate-400";
+        }
+      }
+    };
 
     window.getFirebaseConfig = function() {
       try {
@@ -149,12 +166,19 @@
     window.saveFirebaseConfig = async function(configObj) {
       if (!configObj || !configObj.apiKey) {
         localStorage.removeItem('eduphoto_firebase_config');
-        showToast("Cloud configuration cleared. Running in local mode.", "info");
-        location.reload();
+        if (syncUnsubscribe) {
+          syncUnsubscribe();
+          syncUnsubscribe = null;
+        }
+        isCloudReady = false;
+        isQuotaExceeded = false;
+        window.updateCloudBadgeStatus('disconnected');
+        showToast("Cloud configuration cleared. Running in local storage mode.", "info");
         return;
       }
       try {
         localStorage.setItem('eduphoto_firebase_config', JSON.stringify(configObj));
+        isQuotaExceeded = false;
         showToast("Firebase credentials saved! Connecting to cloud...", "success");
         await initCloudSync();
       } catch (e) {
@@ -164,11 +188,16 @@
 
     async function initCloudSync() {
       const firebaseConfig = window.getFirebaseConfig();
-      const cloudBadge = document.getElementById('cloud-sync-badge');
 
       if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey === "demo") {
         console.info("Running in local storage mode.");
-        if (cloudBadge) cloudBadge.classList.add('hidden');
+        window.updateCloudBadgeStatus('disconnected');
+        return;
+      }
+
+      if (isQuotaExceeded) {
+        console.warn("Firestore quota is currently exhausted. Operating in local mode.");
+        window.updateCloudBadgeStatus('quota-exceeded');
         return;
       }
 
@@ -192,10 +221,7 @@
         }
 
         isCloudReady = true;
-        if (cloudBadge) {
-          cloudBadge.classList.remove('hidden');
-          cloudBadge.title = "Connected live to Firestore cloud database (" + (firebaseConfig.projectId || 'Firebase') + ")";
-        }
+        window.updateCloudBadgeStatus('connected', "Connected live to Firestore cloud database (" + (firebaseConfig.projectId || 'Firebase') + ")");
 
         if (syncUnsubscribe) syncUnsubscribe();
 
@@ -212,48 +238,73 @@
           }
         }, (err) => {
           console.warn("Cloud sync snapshot notice:", err);
-          if (err.code === 'permission-denied') {
+          if (err.code === 'resource-exhausted') {
+            // Unsubscribe immediately to stop Firestore SDK from running exponential backoff loops
+            if (syncUnsubscribe) {
+              syncUnsubscribe();
+              syncUnsubscribe = null;
+            }
+            isCloudReady = false;
+            isQuotaExceeded = true;
+            window.updateCloudBadgeStatus('quota-exceeded');
+            showToast("Firebase Daily Quota Exceeded. Switched to offline local mode automatically.", "warning");
+          } else if (err.code === 'permission-denied') {
             showToast("Firebase Security Rules Blocked Access: Set Rules to allow read, write: if true;", "error");
           }
         });
 
-        showToast("Cloud Database Connected Live!", "success");
-
       } catch (err) {
         console.warn("Cloud sync error:", err);
-        if (cloudBadge) cloudBadge.classList.add('hidden');
-        showToast("Could not connect to Firebase: " + err.message, "error");
+        if (err.code === 'resource-exhausted') {
+          isCloudReady = false;
+          isQuotaExceeded = true;
+          window.updateCloudBadgeStatus('quota-exceeded');
+          showToast("Firebase Daily Quota Exceeded. Operating in local mode.", "warning");
+        } else {
+          window.updateCloudBadgeStatus('disconnected');
+          showToast("Could not connect to Firebase: " + err.message, "error");
+        }
       }
     }
 
     window.saveStudentToCloud = async function(student) {
-      if (!isCloudReady || !db || !student) return;
+      if (isQuotaExceeded || !isCloudReady || !db || !student) return false;
       try {
-        let studentToSave = student;
-        if (student.photo && student.photo.length > 850000) {
-          const safePhoto = await window.optimizePhotoForCloud(student.photo);
-          student.photo = safePhoto;
-          studentToSave = { ...student, photo: safePhoto };
+        let studentToSave = { ...student };
+        studentToSave.updatedAt = student.updatedAt || Date.now();
+        if (studentToSave.photo && studentToSave.photo.length > 220000) {
+          studentToSave.photo = await window.optimizePhotoForCloud(studentToSave.photo);
+          student.photo = studentToSave.photo;
         }
         const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id);
         await setDoc(studentDocRef, studentToSave, { merge: true });
+        console.log(`Synced student ${student.name} to Firestore successfully.`);
+        return true;
       } catch (err) {
-        console.error("Cloud save failed:", err);
+        console.error("Cloud save failed for student:", err);
+        if (err.code === 'resource-exhausted') {
+          if (syncUnsubscribe) {
+            syncUnsubscribe();
+            syncUnsubscribe = null;
+          }
+          isCloudReady = false;
+          isQuotaExceeded = true;
+          window.updateCloudBadgeStatus('quota-exceeded');
+          showToast("Firebase Daily Quota Exceeded. Data preserved locally.", "warning");
+        } else if (err.code === 'permission-denied') {
+          showToast("Firebase Rules Blocked Save: Set rules: 'allow read, write: if true;' in Firebase Console!", "error");
+        } else {
+          showToast("Cloud sync failed: " + err.message, "error");
+        }
+        return false;
       }
     };
 
     window.saveAllStudentsToCloud = async function(students) {
-      if (!isCloudReady || !db || !students) return;
+      if (isQuotaExceeded || !isCloudReady || !db || !students || !Array.isArray(students)) return;
       try {
         for (const s of students) {
-          let studentToSave = s;
-          if (s.photo && s.photo.length > 850000) {
-            const safePhoto = await window.optimizePhotoForCloud(s.photo);
-            s.photo = safePhoto;
-            studentToSave = { ...s, photo: safePhoto };
-          }
-          const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', s.id);
-          await setDoc(studentDocRef, studentToSave, { merge: true });
+          await window.saveStudentToCloud(s);
         }
       } catch (err) {
         console.error("Batch cloud save failed:", err);
@@ -261,7 +312,7 @@
     };
 
     window.deleteStudentFromCloud = async function(studentId) {
-      if (!isCloudReady || !db) return;
+      if (isQuotaExceeded || !isCloudReady || !db) return;
       try {
         const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', studentId);
         await deleteDoc(studentDocRef);
@@ -708,10 +759,15 @@
               <textarea id="setting-firebase-json" rows="3" placeholder='{"apiKey": "AIzaSy...", "authDomain": "...", "projectId": "...", "storageBucket": "..."}' class="w-full p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-200 font-mono text-[10px] focus:outline-none focus:border-brand-500"></textarea>
             </div>
 
-            <div class="flex justify-between items-center pt-1">
-              <a href="https://console.firebase.google.com/" target="_blank" class="text-brand-400 hover:underline text-[11px] flex items-center gap-1">
-                <i class="fa-solid fa-arrow-up-right-from-square"></i> Firebase Console
-              </a>
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div class="flex items-center gap-3">
+                <a href="https://console.firebase.google.com/" target="_blank" class="text-brand-400 hover:underline text-[11px] flex items-center gap-1">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> Firebase Console
+                </a>
+                <button type="button" id="btn-clear-firebase-config" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold rounded-lg border border-rose-500/20 transition text-[11px] flex items-center gap-1">
+                  <i class="fa-solid fa-plug-circle-xmark"></i> Disconnect / Local Mode
+                </button>
+              </div>
               <button type="button" id="btn-apply-firebase-config" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 text-white font-semibold rounded-lg transition text-[11px]">
                 Save & Connect Cloud
               </button>
@@ -1050,13 +1106,14 @@
 
     function deleteStudentPhoto(id) {
       const student = state.students.find(s => s.id === id);
-      if (!student || !student.photo) return;
+      if (!student) return;
 
       student.photo = null;
       student.status = 'Pending';
       student.photoFilename = null;
+      student.updatedAt = Date.now();
 
-      saveState();
+      saveLocalOnly();
 
       if (window.saveStudentToCloud) {
         window.saveStudentToCloud(student);
@@ -1085,15 +1142,10 @@
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.students && Array.isArray(parsed.students)) {
-            state.students = parsed.students;
-
-            // Sanitize and optimize any oversized photos that were causing Firestore upload failures
-            state.students.forEach(async (s) => {
-              if (s.photo && s.photo.length > 850000) {
-                s.photo = await window.optimizePhotoForCloud(s.photo);
-                saveState();
-              }
-            });
+            state.students = parsed.students.map(s => ({
+              ...s,
+              updatedAt: s.updatedAt || Date.now()
+            }));
           }
           if (parsed.settings) {
             state.settings = { ...state.settings, ...parsed.settings };
@@ -1147,6 +1199,10 @@
     }
 
     function saveState() {
+      saveLocalOnly();
+    }
+
+    function saveLocalOnly() {
       try {
         localStorage.setItem('eduphoto_app_state_v2.5', JSON.stringify({
           students: state.students,
@@ -1156,8 +1212,42 @@
       } catch (e) {
         console.warn("Could not save state to localStorage:", e);
       }
-      if (window.saveAllStudentsToCloud && state.students) {
-        window.saveAllStudentsToCloud(state.students);
+    }
+
+    function mergeCloudStudents(cloudStudents) {
+      if (!cloudStudents || !Array.isArray(cloudStudents) || cloudStudents.length === 0) return;
+
+      const localMap = new Map(state.students.map(s => [s.id, s]));
+      let stateChanged = false;
+
+      cloudStudents.forEach(cloudStudent => {
+        const local = localMap.get(cloudStudent.id);
+        if (!local) {
+          localMap.set(cloudStudent.id, cloudStudent);
+          stateChanged = true;
+        } else {
+          const localTime = Number(local.updatedAt) || 0;
+          const cloudTime = Number(cloudStudent.updatedAt) || 0;
+
+          // If cloud is newer or equal, update local state
+          if (cloudTime >= localTime) {
+            if (cloudStudent.photo !== local.photo || cloudStudent.status !== local.status || cloudStudent.name !== local.name) {
+              localMap.set(cloudStudent.id, { ...local, ...cloudStudent });
+              stateChanged = true;
+            }
+          }
+          // Note: If local is newer, keep local version in memory without pushing back during snapshot reception
+        }
+      });
+
+      if (stateChanged) {
+        state.students = Array.from(localMap.values());
+        saveLocalOnly();
+        renderFilters();
+        renderStudentTable();
+        if (state.selectedStudentId) {
+          selectStudent(state.selectedStudentId);
+        }
       }
     }
 
@@ -1693,20 +1783,15 @@
       const student = state.students.find(s => s.id === state.selectedStudentId);
       if (!student || !state.pendingPhotoDataUrl) return;
 
-      let finalPhoto = state.pendingPhotoDataUrl;
-      if (finalPhoto && finalPhoto.length > 850000) {
-        finalPhoto = await window.optimizePhotoForCloud(finalPhoto);
-      }
+      showToast("Optimizing photo...", "info");
+      const finalPhoto = await window.optimizePhotoForCloud(state.pendingPhotoDataUrl);
 
       student.photo = finalPhoto;
       student.status = 'Captured';
       student.photoFilename = generateStudentPhotoFilename(student);
+      student.updatedAt = Date.now();
 
-      saveState();
-
-      if (window.saveStudentToCloud) {
-        window.saveStudentToCloud(student);
-      }
+      saveLocalOnly();
 
       renderStudentTable();
       selectStudent(student.id);
@@ -1714,7 +1799,16 @@
       const modal = document.getElementById('modal-preview');
       if (modal) modal.classList.add('hidden');
 
-      showToast(`Photo saved for ${student.name}!`, "success");
+      if (window.saveStudentToCloud) {
+        const synced = await window.saveStudentToCloud(student);
+        if (synced) {
+          showToast(`Photo saved & synced to cloud for ${student.name}!`, "success");
+        } else {
+          showToast(`Photo saved locally for ${student.name}! (Cloud save failed or offline)`, "warning");
+        }
+      } else {
+        showToast(`Photo saved locally for ${student.name}!`, "success");
+      }
     }
 
     function downloadSampleExcel() {
@@ -2102,8 +2196,10 @@
         document.getElementById('modal-settings').classList.add('hidden');
       });
 
-      document.getElementById('setting-quality')?.addEventListener('input', (e) => {
-        document.getElementById('quality-val-display').textContent = parseFloat(e.target.value).toFixed(2);
+      document.getElementById('btn-clear-firebase-config')?.addEventListener('click', () => {
+        const fbJsonEl = document.getElementById('setting-firebase-json');
+        if (fbJsonEl) fbJsonEl.value = '';
+        window.saveFirebaseConfig(null);
       });
 
       document.getElementById('btn-apply-firebase-config')?.addEventListener('click', () => {
@@ -2178,11 +2274,17 @@
           class: sClass,
           language,
           status: 'Pending',
-          photo: null
+          photo: null,
+          updatedAt: Date.now()
         };
 
         state.students.push(newStudent);
-        saveState();
+        saveLocalOnly();
+
+        if (window.saveStudentToCloud) {
+          window.saveStudentToCloud(newStudent);
+        }
+
         renderFilters();
         renderStudentTable();
 
@@ -2287,12 +2389,7 @@
       }
 
       window.onCloudStudentsSync = function(cloudStudents) {
-        if (cloudStudents && cloudStudents.length > 0) {
-          state.students = cloudStudents;
-          saveState();
-          renderFilters();
-          renderStudentTable();
-        }
+        mergeCloudStudents(cloudStudents);
       };
 
       initFaceDetectionAI();
