@@ -74,33 +74,9 @@
       window.showToast(message, type);
     }
 
-    // Compresses photos to crisp 800x1000 ID dimensions (~90KB - 150KB) so Firestore and localStorage never fail
-    window.optimizePhotoForCloud = async function(dataUrl, maxBytes = 220000) {
-      if (!dataUrl || typeof dataUrl !== 'string') return dataUrl;
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          let targetW = 800;
-          let targetH = 1000;
-          const canvas = document.createElement('canvas');
-          canvas.width = targetW;
-          canvas.height = targetH;
-          const ctx = canvas.getContext('2d');
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, targetW, targetH);
-
-          let quality = 0.82;
-          let result = canvas.toDataURL('image/jpeg', quality);
-          while (result.length > maxBytes && quality > 0.45) {
-            quality -= 0.08;
-            result = canvas.toDataURL('image/jpeg', quality);
-          }
-          resolve(result);
-        };
-        img.onerror = () => resolve(dataUrl);
-        img.src = dataUrl;
-      });
+    // Direct photo passthrough without forced downscaling or compression
+    window.optimizePhotoForCloud = async function(dataUrl) {
+      return dataUrl;
     };
   </script>
 
@@ -272,10 +248,6 @@
       try {
         let studentToSave = { ...student };
         studentToSave.updatedAt = student.updatedAt || Date.now();
-        if (studentToSave.photo && studentToSave.photo.length > 220000) {
-          studentToSave.photo = await window.optimizePhotoForCloud(studentToSave.photo);
-          student.photo = studentToSave.photo;
-        }
         const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id);
         await setDoc(studentDocRef, studentToSave, { merge: true });
         console.log(`Synced student ${student.name} to Firestore successfully.`);
@@ -1783,10 +1755,7 @@
       const student = state.students.find(s => s.id === state.selectedStudentId);
       if (!student || !state.pendingPhotoDataUrl) return;
 
-      showToast("Optimizing photo...", "info");
-      const finalPhoto = await window.optimizePhotoForCloud(state.pendingPhotoDataUrl);
-
-      student.photo = finalPhoto;
+      student.photo = state.pendingPhotoDataUrl;
       student.status = 'Captured';
       student.photoFilename = generateStudentPhotoFilename(student);
       student.updatedAt = Date.now();
