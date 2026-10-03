@@ -456,7 +456,23 @@
 
         <!-- Table Info Bar & Clear Button -->
         <div class="h-9 px-4 sm:px-6 bg-slate-900/40 border-b border-slate-800 flex items-center justify-between shrink-0">
-          <span class="text-[10px] sm:text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Student Roster (Click Row To Select)</span>
+          <div class="flex items-center gap-3">
+            <span class="text-[10px] sm:text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Student Roster (Click Row To Select)</span>
+            
+            <!-- Student Name Font Size Controls -->
+            <div class="flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-lg px-2 py-0.5 text-xs">
+              <span class="text-[10px] text-slate-400 font-semibold mr-1 flex items-center gap-1">
+                <i class="fa-solid fa-font text-brand-400"></i> Name:
+              </span>
+              <button id="btn-name-font-decrease" type="button" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-0.5" title="Decrease Student Name Font Size">
+                <i class="fa-solid fa-minus text-[9px]"></i> A-
+              </button>
+              <span id="name-font-display" class="text-[10px] font-mono text-brand-400 font-semibold px-1">16px</span>
+              <button id="btn-name-font-increase" type="button" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-0.5" title="Increase Student Name Font Size">
+                <i class="fa-solid fa-plus text-[9px]"></i> A+
+              </button>
+            </div>
+          </div>
           <button id="btn-reset-data" class="text-xs text-slate-400 hover:text-rose-400 transition flex items-center gap-1">
             <i class="fa-solid fa-trash-can"></i> Clear All Data
           </button>
@@ -937,7 +953,8 @@
         format: 'image/jpeg',
         quality: 0.90,
         resolution: '1200x1500',
-        flipCaptured: false
+        flipCaptured: false,
+        nameFontSize: 16
       },
       users: [
         { id: 'u1', name: 'System Admin', email: 'admin@school.edu', role: 'Admin' },
@@ -1109,6 +1126,11 @@
           flip.checked = state.settings.flipCaptured;
         }
 
+        const fontDisp = document.getElementById('name-font-display');
+        if (fontDisp && state.settings.nameFontSize) {
+          fontDisp.textContent = `${state.settings.nameFontSize}px`;
+        }
+
         const storedFirebase = window.getFirebaseConfig ? window.getFirebaseConfig() : null;
         const fbJsonEl = document.getElementById('setting-firebase-json');
         const cloudStatusEl = document.getElementById('settings-cloud-status');
@@ -1240,7 +1262,7 @@
               }
             </td>
             <td class="py-2.5 px-3 sm:px-4 font-mono text-brand-400 font-semibold">${s.code || '---'}</td>
-            <td class="py-2.5 px-3 sm:px-4 font-semibold text-slate-100" dir="auto">${s.name || '---'}</td>
+            <td class="py-2.5 px-3 sm:px-4 font-bold text-white tracking-wide leading-snug" style="font-size: ${state.settings?.nameFontSize || 16}px;" dir="auto">${s.name || '---'}</td>
             <td class="py-2.5 px-3 sm:px-4 text-slate-300" dir="auto">${s.grade || '---'}</td>
             <td class="py-2.5 px-3 sm:px-4 text-slate-300" dir="auto">${s.class || '---'}</td>
             <td class="py-2.5 px-3 sm:px-4 text-slate-300">${s.language || '---'}</td>
@@ -1250,16 +1272,16 @@
               </span>
             </td>
             <td class="py-2.5 px-3 sm:px-4 text-right">
-              <div class="flex items-center justify-end gap-1.5">
+              <div class="flex items-center justify-end gap-1">
                 ${s.photo ? `
-                  <button onclick="event.stopPropagation(); viewStudentPhoto('${s.id}')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-brand-400 transition text-xs" title="View Full Photo">
+                  <button onclick="event.stopPropagation(); viewStudentPhoto('${s.id}')" class="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-brand-400 transition text-[11px]" title="View Full Photo">
                     <i class="fa-solid fa-eye"></i>
                   </button>
                 ` : ''}
-                <button onclick="event.stopPropagation(); selectStudent('${s.id}')" class="px-2.5 py-1 rounded-lg ${isSelected ? 'bg-brand-600 text-white' : 'bg-brand-600/20 text-brand-300 hover:bg-brand-600 hover:text-white'} transition text-xs font-medium">
-                  ${isSelected ? '<i class="fa-solid fa-camera"></i> Active' : 'Select'}
+                <button onclick="event.stopPropagation(); selectStudent('${s.id}')" class="px-2 py-0.5 rounded-md ${isSelected ? 'bg-brand-600 text-white' : 'bg-brand-600/20 text-brand-300 hover:bg-brand-600 hover:text-white'} transition text-[11px] font-medium">
+                  ${isSelected ? '<i class="fa-solid fa-camera text-[10px]"></i> Active' : 'Select'}
                 </button>
-                <button onclick="event.stopPropagation(); promptDeleteStudent('${s.id}')" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white transition text-xs" title="Delete Student">
+                <button onclick="event.stopPropagation(); promptDeleteStudent('${s.id}')" class="p-1 rounded-md bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white transition text-[11px]" title="Delete Student">
                   <i class="fa-solid fa-trash-can"></i>
                 </button>
               </div>
@@ -1989,6 +2011,25 @@
       });
 
       document.getElementById('btn-confirm-delete')?.addEventListener('click', confirmDeleteStudent);
+
+      // Student Name Font Size Controls
+      document.getElementById('btn-name-font-decrease')?.addEventListener('click', () => {
+        const current = state.settings.nameFontSize || 16;
+        state.settings.nameFontSize = Math.max(12, current - 2);
+        const fontDisp = document.getElementById('name-font-display');
+        if (fontDisp) fontDisp.textContent = `${state.settings.nameFontSize}px`;
+        saveState();
+        renderStudentTable();
+      });
+
+      document.getElementById('btn-name-font-increase')?.addEventListener('click', () => {
+        const current = state.settings.nameFontSize || 16;
+        state.settings.nameFontSize = Math.min(28, current + 2);
+        const fontDisp = document.getElementById('name-font-display');
+        if (fontDisp) fontDisp.textContent = `${state.settings.nameFontSize}px`;
+        saveState();
+        renderStudentTable();
+      });
 
       // Camera Controls
       document.getElementById('btn-snap-photo')?.addEventListener('click', snapPhoto);
