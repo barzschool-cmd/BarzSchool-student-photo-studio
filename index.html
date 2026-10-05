@@ -982,7 +982,8 @@
         quality: 0.90,
         resolution: '1200x1500',
         flipCaptured: false,
-        nameFontSize: 16
+        nameFontSize: 16,
+        snapShortcut: 'Space'
       },
       users: [
         { id: 'u1', name: 'System Admin', email: 'admin@school.edu', role: 'Admin' },
@@ -1155,6 +1156,8 @@
           fontDisp.textContent = `${state.settings.nameFontSize}px`;
         }
 
+        updateShortcutUI();
+
         const storedFirebase = window.getFirebaseConfig ? window.getFirebaseConfig() : null;
         const fbJsonEl = document.getElementById('setting-firebase-json');
         const cloudStatusEl = document.getElementById('settings-cloud-status');
@@ -1183,6 +1186,18 @@
         }));
       } catch (e) {
         console.warn("Could not save state to localStorage:", e);
+      }
+    }
+
+    function updateShortcutUI() {
+      const shortcut = state.settings.snapShortcut || 'Space';
+      const badge = document.getElementById('snap-shortcut-badge');
+      if (badge) {
+        badge.textContent = shortcut.toUpperCase();
+      }
+      const shortcutInput = document.getElementById('setting-shortcut-key');
+      if (shortcutInput) {
+        shortcutInput.value = shortcut;
       }
     }
 
@@ -2196,8 +2211,77 @@
         state.settings.flipCaptured = document.getElementById('setting-flip-captured').checked;
 
         saveState();
+        updateShortcutUI();
         document.getElementById('modal-settings').classList.add('hidden');
         showToast("Settings updated successfully!", "success");
+      });
+
+      // Dynamic Shortcut Key Recorder
+      const shortcutInput = document.getElementById('setting-shortcut-key');
+      if (shortcutInput) {
+        shortcutInput.addEventListener('focus', () => {
+          shortcutInput.value = 'Press any key...';
+          shortcutInput.classList.add('border-brand-400', 'bg-brand-950/40');
+        });
+        shortcutInput.addEventListener('keydown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          let keyName = e.code === 'Space' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+          if (e.key === 'Escape') keyName = 'Space';
+          state.settings.snapShortcut = keyName;
+          updateShortcutUI();
+          saveState();
+          shortcutInput.blur();
+          showToast(`Snap shortcut updated to [${keyName}]!`, "success");
+        });
+        shortcutInput.addEventListener('blur', () => {
+          shortcutInput.classList.remove('border-brand-400', 'bg-brand-950/40');
+          shortcutInput.value = state.settings.snapShortcut || 'Space';
+        });
+      }
+
+      document.getElementById('btn-reset-shortcut')?.addEventListener('click', () => {
+        state.settings.snapShortcut = 'Space';
+        updateShortcutUI();
+        saveState();
+        showToast("Shortcut reset to [Space]", "info");
+      });
+
+      // Global Keyboard Shortcut Listener for Quick Snap
+      window.addEventListener('keydown', (e) => {
+        // Ignore keypresses while typing in inputs, textareas, or selects
+        const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+        if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') return;
+
+        // Ignore when any modal is currently visible
+        const openModals = [
+          'modal-preview',
+          'modal-view-photo',
+          'modal-settings',
+          'modal-add-student',
+          'modal-admin',
+          'modal-guide',
+          'modal-delete-confirm',
+          'modal-clear-confirm'
+        ].some(id => {
+          const el = document.getElementById(id);
+          return el && !el.classList.contains('hidden');
+        });
+        if (openModals) return;
+
+        const targetKey = (state.settings.snapShortcut || 'Space').toLowerCase();
+        const pressedKey = (e.code === 'Space' ? 'Space' : (e.key.length === 1 ? e.key.toUpperCase() : e.key)).toLowerCase();
+        const codeKey = e.code.toLowerCase();
+
+        if (pressedKey === targetKey || codeKey === targetKey) {
+          e.preventDefault();
+          const snapBtn = document.getElementById('btn-snap-photo');
+          if (snapBtn && !snapBtn.disabled) {
+            snapBtn.click();
+          } else if (!state.selectedStudentId) {
+            showToast("Please select a student from the roster first!", "warning");
+          }
+        }
       });
 
       // Manual Add Student Modal
