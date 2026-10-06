@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>EduPhoto PRO - Student Photo Studio</title>
+  <title>BarzSchool_Student Photo Studio</title>
   
   <!-- Modern Clean Web Fonts: Inter (UI & English), Noto Sans Arabic (Kurdish Sorani & Arabic), JetBrains Mono (Codes & Shortcuts) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -141,7 +141,7 @@
       </div>
       <div>
         <h1 class="font-extrabold text-sm sm:text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent flex items-center gap-2">
-          EduPhoto <span class="text-brand-400 text-xs sm:text-sm font-black px-1.5 py-0.5 rounded bg-brand-500/10 border border-brand-500/20">PRO</span>
+          BarzSchool <span class="text-brand-400 text-xs sm:text-sm font-black px-1.5 py-0.5 rounded bg-brand-500/10 border border-brand-500/20">Studio - By Dana Sulaiman</span>
         </h1>
         <p class="text-[10px] sm:text-xs text-slate-400 hidden xs:block">Biometric 4x5 Student Capture & Cloud Sync</p>
       </div>
@@ -725,10 +725,10 @@
     function loadPersistedState() {
       try {
         // Enforce zero student data in local storage: purge any legacy student cache
-        localStorage.removeItem('eduphoto_students');
+        localStorage.removeItem('BarzSchool_students');
 
         // Only load app UI preferences & Firebase configuration
-        const savedSettings = localStorage.getItem('eduphoto_settings');
+        const savedSettings = localStorage.getItem('BarzSchool_settings');
         if (savedSettings) {
           const parsed = JSON.parse(savedSettings);
           state.settings = { ...state.settings, ...parsed };
@@ -741,7 +741,7 @@
     function saveLocalSettings() {
       try {
         // Strictly save ONLY UI settings and Firebase credentials - NEVER student or photo data
-        localStorage.setItem('eduphoto_settings', JSON.stringify(state.settings));
+        localStorage.setItem('BarzSchool_settings', JSON.stringify(state.settings));
       } catch (err) {
         console.warn("Settings storage write error:", err);
       }
@@ -1798,7 +1798,7 @@
       const content = await zip.generateAsync({ type: 'blob' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(content);
-      a.download = `EduPhoto_Bundle_${new Date().toISOString().slice(0,10)}.zip`;
+      a.download = `BarzSchool_Bundle_${new Date().toISOString().slice(0,10)}.zip`;
       a.click();
       showToast("ZIP Bundle downloaded successfully!", "success");
     }
@@ -1836,7 +1836,7 @@
       const ws = XLSX.utils.json_to_sheet(sample);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Students");
-      XLSX.writeFile(wb, "EduPhoto_Sample_Template.xlsx");
+      XLSX.writeFile(wb, "BarzSchool_Sample_Template.xlsx");
     }
   </script>
 
